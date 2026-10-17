@@ -62,6 +62,34 @@
             </intent-filter>
         </activity>
 
+        <!-- Фоновый процесс: обмен с сервером. Тип microphone нужен для работы со звонками. -->
+        <service
+            android:name=".service.GatewayService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|microphone" />
+
+        <!-- Автозапуск при включении телефона и после обновления приложения. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Команды «разбудить процесс» и «остановить процесс» из уведомления и по будильнику. -->
+        <receiver
+            android:name=".service.GatewayCommandReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ru.promcalc.phonegate.action.SYNC_NOW" />
+                <action android:name="ru.promcalc.phonegate.action.STOP" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

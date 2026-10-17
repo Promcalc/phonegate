@@ -125,6 +125,24 @@ fun SettingsScreen() {
 
             item { SectionTitle("Фоновый процесс") }
             item {
+                Text(
+                    text = if (draft.serviceEnabled) {
+                        "Процесс запущен: обмен идёт с интервалом ${draft.intervalSeconds} с"
+                    } else {
+                        "Процесс остановлен: обмен не выполняется"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            item {
+                Button(
+                    onClick = { viewModel.setServiceEnabled(!draft.serviceEnabled) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (draft.serviceEnabled) "Остановить фоновый процесс" else "Запустить фоновый процесс")
+                }
+            }
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -132,13 +150,18 @@ fun SettingsScreen() {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Запускать при включении телефона")
                         Text(
-                            text = "Кнопка запуска и остановки появится вместе с фоновой службой",
+                            text = if (draft.serviceEnabled) {
+                                "После перезагрузки процесс поднимется сам"
+                            } else {
+                                "Доступно, когда процесс запущен"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Switch(
                         checked = draft.startOnBoot,
+                        enabled = draft.serviceEnabled,
                         onCheckedChange = { checked -> viewModel.update { it.copy(startOnBoot = checked) } },
                     )
                 }

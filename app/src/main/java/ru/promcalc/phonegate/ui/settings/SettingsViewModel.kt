@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.settings.Settings
 import ru.promcalc.phonegate.logRepository
+import ru.promcalc.phonegate.service.GatewayServiceControl
 import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncCoordinator
 import ru.promcalc.phonegate.syncStateStore
@@ -96,6 +97,27 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _pendingTasks.value = getApplication<Application>().taskStore.pending().size
     }
 
+    /**
+     * Кнопка «Запустить/Остановить фоновый процесс»: сначала сохраняем настройки (цикл должен
+     * работать с ними), затем запускаем или останавливаем службу.
+     */
+    fun setServiceEnabled(enabled: Boolean) {
+        val candidate = _draft.value.copy(serviceEnabled = enabled)
+        val problems = validate(candidate)
+        if (problems.isNotEmpty()) {
+            _errors.value = problems
+            return
+        }
+
+        _draft.value = candidate
+        repository.save(candidate)
+        saved = candidate
+        _dirty.value = false
+        GatewayServiceControl.setEnabled(getApplication(), enabled)
+        _message.value = if (enabled) "Фоновый процесс запущен" else "Фоновый процесс остановлен"
+        refreshStatus()
+    }
+
     /** Ручной обмен: собрать данные, отправить их и забрать команды. */
     fun sendNow() {
         if (_sending.value) return
@@ -142,6 +164,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         } else {
             "Настройки сохранены"
         }
+        // Требование ТЗ: после сохранения настроек фоновый процесс перезапускается.
+        GatewayServiceControl.restart(getApplication())
         refreshStatus()
     }
 
