@@ -19,6 +19,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import ru.promcalc.phonegate.core.Time
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.remote.SyncOutcome
+import ru.promcalc.phonegate.data.sim.SubscriptionRepository
+import ru.promcalc.phonegate.data.telephony.IncomingCallHandler
+import ru.promcalc.phonegate.data.telephony.IncomingCallWatcher
 import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncCoordinator
@@ -41,11 +44,17 @@ class GatewayService : Service() {
 
     private val taskExecutor get() = applicationContext.taskExecutor
 
+    private val incomingCallHandler by lazy { IncomingCallHandler(this) }
+    private val incomingCallWatcher by lazy {
+        IncomingCallWatcher(this, SubscriptionRepository(this), logRepository)
+    }
+
     override fun onCreate() {
         super.onCreate()
         Notifications.ensureChannels(this)
         startForegroundWith("подготовка")
         logRepository.info(LogCategory.SERVICE, "Фоновый процесс создан")
+        startIncomingCallTracking()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -69,8 +78,34 @@ class GatewayService : Service() {
     override fun onDestroy() {
         loopJob?.cancel()
         scope.cancel()
+        stopIncomingCallTracking()
         logRepository.info(LogCategory.SERVICE, "Фоновый процесс остановлен")
         super.onDestroy()
+    }
+
+    /**
+     * Слежение за входящими звонками включается из `onCreate`, то есть из главного потока:
+     * `PhoneStateListener` на старых Android требует поток с очередью сообщений.
+     */
+    private fun startIncomingCallTracking() {
+        try {
+            incomingCallWatcher.start(incomingCallHandler)
+        } catch (e: Exception) {
+            logRepository.error(
+                LogCategory.CALL_IN,
+                "Не удалось включить слежение за входящими звонками",
+                e.toString(),
+            )
+        }
+    }
+
+    private fun stopIncomingCallTracking() {
+        try {
+            incomingCallWatcher.stop()
+        } catch (e: Exception) {
+            logRepository.debug(LogCategory.CALL_IN, "Ошибка при отключении слежения за звонками", e.toString())
+        }
+        incomingCallHandler.stop()
     }
 
     private fun startLoop() {
