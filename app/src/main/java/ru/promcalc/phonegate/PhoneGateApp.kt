@@ -8,6 +8,7 @@ import ru.promcalc.phonegate.data.outgoing.OutgoingJournal
 import ru.promcalc.phonegate.data.remote.SyncCoordinator
 import ru.promcalc.phonegate.data.settings.SettingsRepository
 import ru.promcalc.phonegate.data.state.SyncStateStore
+import ru.promcalc.phonegate.data.tasks.TaskExecutor
 import ru.promcalc.phonegate.data.tasks.TaskStore
 
 /**
@@ -29,6 +30,8 @@ class PhoneGateApp : Application() {
     val outgoingJournal: OutgoingJournal by lazy { OutgoingJournal(this, logRepository) }
 
     val syncCoordinator: SyncCoordinator by lazy { SyncCoordinator(this) }
+
+    val taskExecutor: TaskExecutor by lazy { TaskExecutor(this) }
 
     override fun onCreate() {
         super.onCreate()
@@ -58,3 +61,5 @@ val Context.taskStore: TaskStore get() = phoneGateApp.taskStore
 val Context.outgoingJournal: OutgoingJournal get() = phoneGateApp.outgoingJournal
 
 val Context.syncCoordinator: SyncCoordinator get() = phoneGateApp.syncCoordinator
+
+val Context.taskExecutor: TaskExecutor get() = phoneGateApp.taskExecutor

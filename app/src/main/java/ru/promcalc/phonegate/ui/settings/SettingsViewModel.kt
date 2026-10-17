@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.settings.Settings
 import ru.promcalc.phonegate.logRepository
+import ru.promcalc.phonegate.service.GatewayService
 import ru.promcalc.phonegate.service.GatewayServiceControl
 import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncCoordinator
@@ -128,6 +129,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
             _message.value = outcome.describe()
             _sending.value = false
+            // Если сервер вернул команду с уже наступившим временем, просим работающий
+            // процесс проверить очередь немедленно.
+            if (outcome.exchangeOk && _draft.value.serviceEnabled) {
+                GatewayService.requestWakeUp()
+            }
             refreshStatus()
         }
     }

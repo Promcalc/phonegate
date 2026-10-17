@@ -12,28 +12,34 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import ru.promcalc.phonegate.core.Time
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.remote.SyncOutcome
 import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncCoordinator
+import ru.promcalc.phonegate.taskExecutor
 
 /**
- * Фоновый процесс: раз в заданный интервал выполняет обмен с сервером.
+ * Фоновый процесс: раз в заданный интервал выполняет обмен с сервером и исполняет задачи,
+ * время которых наступило.
  *
- * Служба постоянная (`START_STICKY`), с постоянным уведомлением. Пауза между циклами
- * отсчитывается по часам, поэтому длительность самого обмена не сдвигает расписание.
- * Будильник переставляется на каждый следующий цикл — если систему убьёт процесс, она
- * поднимет службу по будильнику.
+ * Служба постоянная (`START_STICKY`), с постоянным уведомлением. Момент следующего обмена
+ * считается по часам, поэтому длительность самого обмена не сдвигает расписание; время
+ * пробуждения — минимум из «пора на обмен» и «пора исполнять задачу». Будильник
+ * переставляется на каждое пробуждение: если систему убьёт процесс, она поднимет службу.
  */
 class GatewayService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loopJob: Job? = null
+    private var nextSyncAtMs = 0L
+
+    private val taskExecutor get() = applicationContext.taskExecutor
 
     override fun onCreate() {
         super.onCreate()
@@ -57,8 +63,7 @@ class GatewayService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         logRepository.info(LogCategory.SERVICE, "Приложение закрыто пользователем, фоновый процесс продолжает работу")
-        val intervalMs = currentIntervalMs()
-        SyncAlarmScheduler.schedule(this, System.currentTimeMillis() + intervalMs)
+        SyncAlarmScheduler.schedule(this, nextWakeUpAtMs())
     }
 
     override fun onDestroy() {
@@ -70,23 +75,38 @@ class GatewayService : Service() {
 
     private fun startLoop() {
         if (loopJob?.isActive == true) {
-            logRepository.debug(LogCategory.SERVICE, "Цикл обмена уже работает")
+            logRepository.debug(LogCategory.SERVICE, "Цикл уже работает")
             return
         }
         loopJob = scope.launch {
-            logRepository.info(LogCategory.SERVICE, "Цикл обмена запущен")
+            logRepository.info(LogCategory.SERVICE, "Цикл запущен")
             while (isActive) {
-                val intervalMs = currentIntervalMs()
-                runCycle()
-                SyncAlarmScheduler.schedule(this@GatewayService, System.currentTimeMillis() + intervalMs)
-                delay(intervalMs)
+                if (System.currentTimeMillis() >= nextSyncAtMs) {
+                    runExchange()
+                    nextSyncAtMs = System.currentTimeMillis() + currentIntervalMs()
+                }
+                runDueTasks()
+
+                val wakeAtMs = nextWakeUpAtMs()
+                SyncAlarmScheduler.schedule(this@GatewayService, wakeAtMs)
+                val sleepMs = (wakeAtMs - System.currentTimeMillis()).coerceIn(MIN_SLEEP_MS, MAX_SLEEP_MS)
+                // Просыпаемся раньше, если пришёл сигнал «появилась задача».
+                withTimeoutOrNull(sleepMs) { wakeUpRequests.receive() }
             }
         }
     }
 
-    private fun runCycle() {
+    /** Ближайшее пробуждение: пора на обмен или пора исполнять задачу. */
+    private fun nextWakeUpAtMs(): Long {
+        val nowMs = System.currentTimeMillis()
+        var earliest = if (nextSyncAtMs > 0L) nextSyncAtMs else nowMs + currentIntervalMs()
+        taskExecutor.nextPendingAtMs()?.let { taskAtMs -> if (taskAtMs < earliest) earliest = taskAtMs }
+        return earliest.coerceAtLeast(nowMs + MIN_SLEEP_MS)
+    }
+
+    private fun runExchange() {
         val startedAtMs = System.currentTimeMillis()
-        val outcome = withWakeLock {
+        val outcome = withWakeLock(WAKE_LOCK_TIMEOUT_MS) {
             try {
                 applicationContext.syncCoordinator.syncNow()
             } catch (e: Exception) {
@@ -97,8 +117,18 @@ class GatewayService : Service() {
         Notifications.update(this, notificationText(outcome))
         logRepository.debug(
             LogCategory.SERVICE,
-            "Цикл завершён за ${System.currentTimeMillis() - startedAtMs} мс",
+            "Обмен завершён за ${System.currentTimeMillis() - startedAtMs} мс",
         )
+    }
+
+    private fun runDueTasks() {
+        withWakeLock(WAKE_LOCK_TIMEOUT_MS) {
+            try {
+                taskExecutor.runDueTasks()
+            } catch (e: Exception) {
+                logRepository.error(LogCategory.SERVICE, "Исполнение задач прервано ошибкой", e.toString())
+            }
+        }
     }
 
     private fun notificationText(outcome: SyncOutcome?): String = when {
@@ -158,8 +188,8 @@ class GatewayService : Service() {
         add(0)
     }
 
-    /** Будим процесс на время обмена: без этого таймеры засыпают вместе с устройством. */
-    private fun <T> withWakeLock(block: () -> T): T {
+    /** Будим процесс на время работы: без этого таймеры засыпают вместе с устройством. */
+    private fun <T> withWakeLock(timeoutMs: Long, block: () -> T): T {
         val powerManager = getSystemService(PowerManager::class.java)
         val lock = try {
             powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
@@ -167,9 +197,9 @@ class GatewayService : Service() {
             null
         }
         try {
-            lock?.acquire(WAKE_LOCK_TIMEOUT_MS)
+            lock?.acquire(timeoutMs)
         } catch (_: Exception) {
-            // Продолжаем без блокировки: обмен всё равно попробуем выполнить.
+            // Продолжаем без блокировки: работу всё равно попробуем выполнить.
         }
         return try {
             block()
@@ -177,14 +207,29 @@ class GatewayService : Service() {
             try {
                 if (lock?.isHeld == true) lock.release()
             } catch (_: Exception) {
-                // Ничего не делаем: снять блокировку не удалось, система снимет сама по таймауту.
+                // Ничего не делаем: блокировку снимет система по таймауту.
             }
         }
     }
 
-    private companion object {
-        const val MIN_INTERVAL_SECONDS = 5
-        const val WAKE_LOCK_TAG = "phonegate:sync"
-        const val WAKE_LOCK_TIMEOUT_MS = 2L * 60 * 1000
+    companion object {
+        /**
+         * Сигнал «проверь очередь задач прямо сейчас»: приходит из ручной отправки, когда
+         * сервер вернул команду с временем, которое уже наступило.
+         */
+        private val wakeUpRequests = Channel<Unit>(Channel.CONFLATED)
+
+        /** Попросить работающий цикл проверить задачи, не дожидаясь планового пробуждения. */
+        fun requestWakeUp() {
+            wakeUpRequests.trySend(Unit)
+        }
+
+        private const val MIN_INTERVAL_SECONDS = 5
+        private const val MIN_SLEEP_MS = 1_000L
+        private const val MAX_SLEEP_MS = 10L * 60 * 1000
+        private const val WAKE_LOCK_TAG = "phonegate:sync"
+
+        /** Звонок может длиться десятки секунд, поэтому блокировка берётся с запасом. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 5L * 60 * 1000
     }
 }

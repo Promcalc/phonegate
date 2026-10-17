@@ -65,7 +65,9 @@ class TaskStore(context: Context, private val log: LogRepository) {
             createdAtMs = createdAtMs,
         )
         synchronized(lock) {
-            if (tasks.any { it.sameRequestAs(candidate) }) return false
+            // Проваленные задачи в проверке не участвуют: если сервер пришлёт ту же команду
+            // повторно, у пользователя появится шанс исполнить её после исправления помехи.
+            if (tasks.any { it.state != TaskState.FAILED && it.sameRequestAs(candidate) }) return false
             val stored = candidate.copy(id = nextId++)
             tasks.add(stored)
             persistLocked()

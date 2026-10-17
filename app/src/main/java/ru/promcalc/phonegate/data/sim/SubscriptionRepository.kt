@@ -58,6 +58,20 @@ class SubscriptionRepository(private val context: Context) {
         }
     }
 
+    /** Идентификатор подписки для слота (0 — первая SIM); [INVALID_SUBSCRIPTION] — не найден. */
+    @Suppress("DEPRECATION") // getActiveSubscriptionInfoForSimSlotIndex жив, но помечен устаревшим
+    fun subscriptionIdForSlot(simSlot: Int): Int {
+        val subscriptionManager = manager ?: return INVALID_SUBSCRIPTION
+        return try {
+            subscriptionManager.getActiveSubscriptionInfoForSimSlotIndex(simSlot)?.subscriptionId
+                ?: INVALID_SUBSCRIPTION
+        } catch (_: SecurityException) {
+            INVALID_SUBSCRIPTION
+        } catch (_: Exception) {
+            INVALID_SUBSCRIPTION
+        }
+    }
+
     /**
      * Слот по идентификатору телефонного аккаунта из журнала вызовов.
      *
@@ -74,6 +88,10 @@ class SubscriptionRepository(private val context: Context) {
 
     companion object {
         const val UNKNOWN_SLOT = -1
+
+        /** Подписка не найдена: работаем с SIM по умолчанию. */
+        const val INVALID_SUBSCRIPTION = -1
+
         private const val MAX_SLOTS = 8
     }
 }
