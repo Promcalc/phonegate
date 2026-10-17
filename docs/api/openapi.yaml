@@ -1,0 +1,331 @@
+openapi: 3.0.3
+info:
+  title: PhoneGate API
+  version: 1.0.0
+  description: |
+    Обмен данными между приложением PhoneGate (телефон-шлюз) и сервером.
+
+    ## Адреса
+    В приложении задаются **два независимых полных URL** (схема, хост, путь):
+
+    1. **URL обмена** — приложение отправляет принятые SMS и журнал звонков, в ответ получает
+       список SMS и звонков к исполнению (`POST`, операция `exchange`).
+    2. **URL отчёта об исходящих** — приложение отправляет то, что выполнило само
+       (отправленные SMS и совершённые звонки), операция `outgoingReport`.
+       Если адрес в настройках пуст, отчёт не отправляется. Ответ сервера не разбирается,
+       важен только HTTP-статус.
+
+    Пути в спецификации условны — реальные адреса задаются в настройках приложения.
+
+    ## Заголовки запроса
+    - `Content-Type: application/json; charset=utf-8`
+    - `Accept: application/json`
+    - Авторизация: имя и значение заголовка задаются в настройках (два поля). По умолчанию
+      имя `Authorization`, значение вида `Bearer <токен>`. Если имя заголовка пустое,
+      заголовок авторизации не добавляется.
+
+    ## Модель доставки
+    - Запрос отправляется каждые N секунд, даже если новых данных нет (пустые массивы) —
+      это признак того, что устройство на связи.
+    - Окно выборки — «с момента последней успешной отправки». Точка отсчёта хранится на
+      устройстве и переживает перезагрузку.
+    - При ошибке (нет сети, таймаут, 4xx, 5xx) данные **накапливаются**: следующий запрос
+      содержит то же окно целиком, дополненное новыми записями. Курсор сдвигается только
+      после успешного ответа.
+    - Поле `sync_id` — UUID окна. Все повторы одного и того же окна приходят с одинаковым
+      `sync_id`; сервер может использовать его для защиты от повторной обработки
+      (например, чтобы не отправить один и тот же SMS дважды при повторном запросе).
+
+    ## Время
+    Поле `time` — локальное время устройства с временной зоной, формат
+    `YYYY-MM-DDTHH:mm:ss+HH:mm` (пример: `2026-10-17T14:05:00+03:00`).
+    Если указанное время уже прошло, команда исполняется немедленно.
+  contact:
+    name: PhoneGate
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://server.example.com
+    description: Адрес задаётся в настройках приложения (URL обмена и URL отчёта — отдельно).
+
+tags:
+  - name: exchange
+    description: Обмен — приём данных и выдача команд
+  - name: outgoing
+    description: Отчёт о выполненных исходящих действиях
+
+security:
+  - HeaderAuth: []
+
+paths:
+  /exchange:
+    post:
+      tags: [exchange]
+      operationId: exchange
+      summary: Отправить принятые SMS и звонки, получить команды
+      description: |
+        Приложение отправляет накопленные принятые SMS и журнал звонков
+        (все типы: входящие, пропущенные, исходящие). В ответ сервер присылает список SMS,
+        которые надо отправить, и звонков, которые надо совершить с соответствующих SIM.
+
+        Ответ `2xx` — окно считается доставленным, курсор сдвигается.
+        Любой другой результат или сетевая ошибка — курсор не сдвигается, данные уходят
+        повторно в следующем цикле.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+            examples:
+              typical:
+                summary: Один номер, одна SMS и один входящий звонок
+                value:
+                  sync_id: 6f1c1e2a-6f0b-4a4e-9d1e-1f2a3b4c5d6e
+                  "+79001234567":
+                    sms:
+                      - time: "2026-10-17T14:05:00+03:00"
+                        text: "Привет, перезвони"
+                        phone: "+79007654321"
+                    call:
+                      - time: "2026-10-17T14:01:12+03:00"
+                        text: ""
+                        phone: "+79007654321"
+                        duration: 47
+                        direction: in
+      responses:
+        '200':
+          description: Команды приняты
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+              examples:
+                commands:
+                  summary: Отправить SMS и совершить звонок
+                  value:
+                    "+79001234567":
+                      sms:
+                        - time: "2026-10-17T15:00:00+03:00"
+                          text: "Ваш заказ готов"
+                          phone: "+79007654321"
+                      call:
+                        - time: "2026-10-17T15:05:00+03:00"
+                          text: "Добрый день!"
+                          phone: "+79007654321"
+        '204':
+          description: Команд нет, тело ответа пустое
+        '400':
+          description: Сервер не принял данные; приложение повторит отправку
+        '500':
+          description: Ошибка сервера; приложение повторит отправку
+
+  /outgoing-report:
+    post:
+      tags: [outgoing]
+      operationId: outgoingReport
+      summary: Отправить отчёт о выполненных исходящих действиях
+      description: |
+        Отправляется на отдельный адрес (настройка «URL отчёта об исходящих»).
+        Содержит только действия, выполненные приложением: успешно отправленные SMS
+        (телефон адресата) и совершённые звонки (`direction = "out"`).
+        Если адрес не задан, запрос не выполняется.
+
+        Схема та же, что у отчёта обмена; семантика — «это сделало приложение».
+        Звонки, совершённые приложением, присутствуют и в отчёте обмена (там полный журнал
+        звонков) — при необходимости сервер может отфильтровать их по `direction`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutgoingReportRequest'
+            examples:
+              typical:
+                summary: Отправленная SMS и совершённый звонок
+                value:
+                  sync_id: 9b2a1c3d-4e5f-6071-8293-a4b5c6d7e8f9
+                  "+79001234567":
+                    sms:
+                      - time: "2026-10-17T15:00:03+03:00"
+                        text: "Ваш заказ готов"
+                        phone: "+79007654321"
+                    call:
+                      - time: "2026-10-17T15:05:01+03:00"
+                        text: ""
+                        phone: "+79007654321"
+                        duration: 21
+                        direction: out
+      responses:
+        '200':
+          description: Отчёт принят (тело ответа не разбирается)
+        '204':
+          description: Отчёт принят (тело ответа не разбирается)
+        '400':
+          description: Сервер не принял отчёт; приложение повторит отправку
+        '500':
+          description: Ошибка сервера; приложение повторит отправку
+
+components:
+  securitySchemes:
+    HeaderAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        Имя и значение заголовка задаются в настройках приложения. Здесь указано значение
+        по умолчанию; если имя заголовка в настройках пустое, авторизация не используется.
+
+  schemas:
+    Direction:
+      type: string
+      description: |
+        Направление звонка: `in` — входящий (в том числе на голосовую почту и принятый
+        другим приложением), `out` — исходящий, `missed` — пропущенный (в том числе
+        отклонённый и заблокированный).
+      enum: [in, out, missed]
+
+    PhoneTime:
+      type: string
+      format: date-time
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$'
+      description: Локальное время устройства с временной зоной.
+      example: "2026-10-17T14:05:00+03:00"
+
+    PhoneNumber:
+      type: string
+      description: Телефонный номер в том виде, в котором его отдала система.
+      example: "+79007654321"
+
+    SmsReportItem:
+      type: object
+      required: [time, text, phone]
+      properties:
+        time:
+          $ref: '#/components/schemas/PhoneTime'
+        text:
+          type: string
+          description: Текст SMS.
+        phone:
+          allOf:
+            - $ref: '#/components/schemas/PhoneNumber'
+            - description: При получении — номер отправителя, при отправке приложением — номер адресата.
+
+    CallReportItem:
+      type: object
+      required: [time, text, phone, duration, direction]
+      properties:
+        time:
+          $ref: '#/components/schemas/PhoneTime'
+        text:
+          type: string
+          description: |
+            Расшифровка голосового сообщения. На текущем этапе всегда пустая строка —
+            расшифровка появится позже.
+        phone:
+          allOf:
+            - $ref: '#/components/schemas/PhoneNumber'
+            - description: При получении — номер звонящего, при звонке приложением — номер абонента.
+        duration:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Длительность в секундах; 0 — трубку не сняли.
+        direction:
+          $ref: '#/components/schemas/Direction'
+
+    SimPayload:
+      type: object
+      description: Данные одного номера (SIM).
+      properties:
+        sms:
+          type: array
+          items:
+            $ref: '#/components/schemas/SmsReportItem'
+        call:
+          type: array
+          items:
+            $ref: '#/components/schemas/CallReportItem'
+
+    SyncRequest:
+      type: object
+      description: |
+        Отчёт о принятых SMS и журнале звонков. Все ключи, кроме `sync_id`, — номера
+        телефонов SIM из настроек приложения (ключи `sim1_phone`/`sim2_phone` из ТЗ).
+        Секция отсутствует, если номер в настройках не задан.
+      required: [sync_id]
+      properties:
+        sync_id:
+          type: string
+          format: uuid
+          description: |
+            Идентификатор окна синхронизации. Одинаков при повторных отправках одного и
+            того же окна, меняется после успешной отправки.
+      additionalProperties:
+        $ref: '#/components/schemas/SimPayload'
+
+    OutgoingReportRequest:
+      type: object
+      description: |
+        Отчёт о действиях, выполненных приложением. Ключи, кроме `sync_id`, — номера
+        телефонов SIM из настроек. В `sms` попадают успешно отправленные сообщения,
+        в `call` — совершённые звонки с `direction = "out"`.
+      required: [sync_id]
+      properties:
+        sync_id:
+          type: string
+          format: uuid
+      additionalProperties:
+        $ref: '#/components/schemas/SimPayload'
+
+    SmsCommandItem:
+      type: object
+      required: [time, text, phone]
+      properties:
+        time:
+          $ref: '#/components/schemas/PhoneTime'
+        text:
+          type: string
+          description: Текст SMS для отправки.
+        phone:
+          allOf:
+            - $ref: '#/components/schemas/PhoneNumber'
+            - description: Номер адресата.
+
+    CallCommandItem:
+      type: object
+      required: [time, text, phone]
+      properties:
+        time:
+          $ref: '#/components/schemas/PhoneTime'
+        text:
+          type: string
+          description: |
+            Что проговорить абоненту при ответе. На текущем этапе не используется:
+            после ответа приложение просто кладёт трубку.
+        phone:
+          allOf:
+            - $ref: '#/components/schemas/PhoneNumber'
+            - description: Номер вызываемого абонента.
+
+    SimCommands:
+      type: object
+      description: Команды для одного номера (SIM).
+      properties:
+        sms:
+          type: array
+          items:
+            $ref: '#/components/schemas/SmsCommandItem'
+        call:
+          type: array
+          items:
+            $ref: '#/components/schemas/CallCommandItem'
+
+    SyncResponse:
+      type: object
+      description: |
+        Команды на исполнение. Все ключи — номера телефонов SIM из настроек приложения.
+        Ключ, не совпадающий ни с одним настроенным номером, игнорируется.
+      additionalProperties:
+        $ref: '#/components/schemas/SimCommands'

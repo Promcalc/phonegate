@@ -1,4 +1,4 @@
-package com.example.phonegate
+package ru.promcalc.phonegate
 
 import org.junit.Test
 
