@@ -21,6 +21,8 @@ data class SyncState(
     val syncId: String = "",
     /** Время последнего успешного отчёта об исходящих (мс). */
     val lastSuccessOutgoingAtMs: Long = 0L,
+    /** Максимальный `id` записи журнала исходящих, попавший в успешный отчёт. */
+    val lastOutgoingRecordId: Long = 0L,
     /** Идентификатор текущего окна отчёта об исходящих. */
     val outgoingSyncId: String = "",
 )
@@ -36,6 +38,7 @@ class SyncStateStore(context: Context) {
         lastCallId = prefs.getLong(KEY_LAST_CALL_ID, 0L),
         syncId = prefs.getString(KEY_SYNC_ID, "").orEmpty(),
         lastSuccessOutgoingAtMs = prefs.getLong(KEY_LAST_SUCCESS_OUTGOING_AT, 0L),
+        lastOutgoingRecordId = prefs.getLong(KEY_LAST_OUTGOING_RECORD_ID, 0L),
         outgoingSyncId = prefs.getString(KEY_OUTGOING_SYNC_ID, "").orEmpty(),
     )
 
@@ -68,9 +71,10 @@ class SyncStateStore(context: Context) {
     }
 
     /** Успешный отчёт об исходящих. */
-    fun onOutgoingSuccess(syncStartAtMs: Long) {
+    fun onOutgoingSuccess(syncStartAtMs: Long, lastRecordId: Long) {
         prefs.edit()
             .putLong(KEY_LAST_SUCCESS_OUTGOING_AT, syncStartAtMs)
+            .putLong(KEY_LAST_OUTGOING_RECORD_ID, lastRecordId)
             .putString(KEY_OUTGOING_SYNC_ID, UUID.randomUUID().toString())
             .apply()
     }
@@ -86,6 +90,7 @@ class SyncStateStore(context: Context) {
             .putLong(KEY_LAST_CALL_ID, 0L)
             .putString(KEY_SYNC_ID, UUID.randomUUID().toString())
             .putLong(KEY_LAST_SUCCESS_OUTGOING_AT, 0L)
+            .putLong(KEY_LAST_OUTGOING_RECORD_ID, 0L)
             .putString(KEY_OUTGOING_SYNC_ID, UUID.randomUUID().toString())
             .apply()
     }
@@ -98,6 +103,7 @@ class SyncStateStore(context: Context) {
         const val KEY_LAST_CALL_ID = "last_call_id"
         const val KEY_SYNC_ID = "sync_id"
         const val KEY_LAST_SUCCESS_OUTGOING_AT = "last_success_outgoing_at"
+        const val KEY_LAST_OUTGOING_RECORD_ID = "last_outgoing_record_id"
         const val KEY_OUTGOING_SYNC_ID = "outgoing_sync_id"
     }
 }

@@ -4,8 +4,11 @@ import android.app.Application
 import android.content.Context
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.logs.LogRepository
+import ru.promcalc.phonegate.data.outgoing.OutgoingJournal
+import ru.promcalc.phonegate.data.remote.SyncCoordinator
 import ru.promcalc.phonegate.data.settings.SettingsRepository
 import ru.promcalc.phonegate.data.state.SyncStateStore
+import ru.promcalc.phonegate.data.tasks.TaskStore
 
 /**
  * Точка входа приложения и ручное внедрение зависимостей.
@@ -20,6 +23,12 @@ class PhoneGateApp : Application() {
     val syncStateStore: SyncStateStore by lazy { SyncStateStore(this) }
 
     val logRepository: LogRepository by lazy { LogRepository(this) }
+
+    val taskStore: TaskStore by lazy { TaskStore(this, logRepository) }
+
+    val outgoingJournal: OutgoingJournal by lazy { OutgoingJournal(this, logRepository) }
+
+    val syncCoordinator: SyncCoordinator by lazy { SyncCoordinator(this) }
 
     override fun onCreate() {
         super.onCreate()
@@ -43,3 +52,9 @@ val Context.settingsRepository: SettingsRepository get() = phoneGateApp.settings
 val Context.syncStateStore: SyncStateStore get() = phoneGateApp.syncStateStore
 
 val Context.logRepository: LogRepository get() = phoneGateApp.logRepository
+
+val Context.taskStore: TaskStore get() = phoneGateApp.taskStore
+
+val Context.outgoingJournal: OutgoingJournal get() = phoneGateApp.outgoingJournal
+
+val Context.syncCoordinator: SyncCoordinator get() = phoneGateApp.syncCoordinator

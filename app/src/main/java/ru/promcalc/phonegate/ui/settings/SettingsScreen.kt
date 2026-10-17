@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -54,6 +55,8 @@ fun SettingsScreen() {
     val errors by viewModel.errors.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val lastSyncAtMs by viewModel.lastSuccessSyncAtMs.collectAsStateWithLifecycle()
+    val pendingTasks by viewModel.pendingTasks.collectAsStateWithLifecycle()
+    val sending by viewModel.sending.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -96,7 +99,29 @@ fun SettingsScreen() {
                 item { ErrorsCard(errors) }
             }
 
-            item { StatusCard(lastSyncAtMs) }
+            item { StatusCard(lastSyncAtMs, pendingTasks) }
+
+            item { SectionTitle("Обмен с сервером") }
+            item {
+                Text(
+                    text = if (dirty) {
+                        "Есть несохранённые изменения — сначала сохраните настройки"
+                    } else {
+                        "Собрать данные за прошедшее время и отправить их на сервер прямо сейчас"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                Button(
+                    onClick = { viewModel.sendNow() },
+                    enabled = !dirty && !sending,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (sending) "Отправка…" else "Отправить сейчас")
+                }
+            }
 
             item { SectionTitle("Фоновый процесс") }
             item {
@@ -327,7 +352,7 @@ private fun ErrorsCard(problems: List<String>) {
 }
 
 @Composable
-private fun StatusCard(lastSyncAtMs: Long) {
+private fun StatusCard(lastSyncAtMs: Long, pendingTasks: Int) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Состояние", style = MaterialTheme.typography.titleSmall)
@@ -337,6 +362,10 @@ private fun StatusCard(lastSyncAtMs: Long) {
                 } else {
                     "Успешных отправок ещё не было"
                 },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "Задач в очереди: $pendingTasks",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

@@ -3,15 +3,19 @@ package ru.promcalc.phonegate.ui.settings
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.settings.Settings
 import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.settingsRepository
+import ru.promcalc.phonegate.syncCoordinator
 import ru.promcalc.phonegate.syncStateStore
+import ru.promcalc.phonegate.taskStore
 
 /**
  * Состояние экрана настроек: черновик, признак изменений, ошибки проверки и сообщения.
@@ -41,6 +45,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val _lastSuccessSyncAtMs = MutableStateFlow(stateStore.load().lastSuccessSyncAtMs)
     val lastSuccessSyncAtMs: StateFlow<Long> = _lastSuccessSyncAtMs.asStateFlow()
+
+    private val _pendingTasks = MutableStateFlow(application.taskStore.pending().size)
+    val pendingTasks: StateFlow<Int> = _pendingTasks.asStateFlow()
+
+    private val _sending = MutableStateFlow(false)
+    val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
     init {
         // Подхватываем изменения, сделанные вне экрана (например, запуск/остановка службы).
@@ -83,6 +93,21 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshStatus() {
         _lastSuccessSyncAtMs.value = stateStore.load().lastSuccessSyncAtMs
+        _pendingTasks.value = getApplication<Application>().taskStore.pending().size
+    }
+
+    /** Ручной обмен: собрать данные, отправить их и забрать команды. */
+    fun sendNow() {
+        if (_sending.value) return
+        _sending.value = true
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                getApplication<Application>().syncCoordinator.syncNow()
+            }
+            _message.value = outcome.describe()
+            _sending.value = false
+            refreshStatus()
+        }
     }
 
     fun messageShown() {
