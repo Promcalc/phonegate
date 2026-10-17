@@ -7,7 +7,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.settings.Settings
+import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncStateStore
 
@@ -21,6 +23,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val repository = application.settingsRepository
     private val stateStore = application.syncStateStore
+    private val logRepository = application.logRepository
 
     private var saved: Settings = repository.current()
 
@@ -99,6 +102,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         if (historyChanged) {
             stateStore.resetCursors()
         }
+        logRepository.info(
+            category = LogCategory.SERVICE,
+            message = if (historyChanged) {
+                "Настройки сохранены, курсор сбора данных сброшен"
+            } else {
+                "Настройки сохранены"
+            },
+        )
         saved = candidate
         _dirty.value = false
         _message.value = if (historyChanged) {

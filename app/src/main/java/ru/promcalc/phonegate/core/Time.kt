@@ -83,6 +83,18 @@ object Time {
         }
     }
 
+    /** Локальная дата `ГГГГ-ММ-ДД` — для имён файлов логов. */
+    fun formatDate(epochMs: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
+        return String.format(
+            Locale.US,
+            "%04d-%02d-%02d",
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.DAY_OF_MONTH),
+        )
+    }
+
     /** Человекочитаемое локальное время для интерфейса и логов. */
     fun formatLocal(epochMs: Long): String {
         val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
