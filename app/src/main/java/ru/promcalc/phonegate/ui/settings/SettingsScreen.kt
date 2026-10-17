@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.promcalc.phonegate.core.Files
 import ru.promcalc.phonegate.core.Time
+import ru.promcalc.phonegate.data.records.RecordingInfo
 import ru.promcalc.phonegate.ui.common.IntField
 import ru.promcalc.phonegate.ui.common.SectionTitle
 import ru.promcalc.phonegate.ui.common.showDateTimePicker
@@ -57,6 +58,7 @@ fun SettingsScreen() {
     val lastSyncAtMs by viewModel.lastSuccessSyncAtMs.collectAsStateWithLifecycle()
     val pendingTasks by viewModel.pendingTasks.collectAsStateWithLifecycle()
     val sending by viewModel.sending.collectAsStateWithLifecycle()
+    val recordings by viewModel.recordings.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -328,9 +330,77 @@ fun SettingsScreen() {
                     supportingText = "Старые записи удаляются автоматически",
                 )
             }
+
+            item { SectionTitle("Записи разговоров") }
+            item {
+                Text(
+                    text = when {
+                        recordings.isEmpty() -> "Записей пока нет"
+                        else ->
+                            "Всего: ${recordings.size}. Последняя: " +
+                                Time.formatLocal(recordings.first().modifiedAtMs)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            recordings.take(RECORDINGS_PREVIEW).forEach { recording ->
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(recording.file.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "${Time.formatLocal(recording.modifiedAtMs)} · ${formatSize(recording.sizeBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { openRecording(context, viewModel, recording) }) {
+                            Text("Открыть")
+                        }
+                    }
+                }
+            }
+            if (recordings.size > RECORDINGS_PREVIEW) {
+                item {
+                    Text(
+                        text = "Показаны последние $RECORDINGS_PREVIEW записей из ${recordings.size}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
+
+/** Сколько записей показывать в списке настроек. */
+private const val RECORDINGS_PREVIEW = 5
+
+private fun openRecording(context: Context, viewModel: SettingsViewModel, recording: RecordingInfo) {
+    try {
+        val uri = viewModel.recordingUri(recording)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "audio/mp4")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        viewModel.showMessage("Не удалось открыть запись: нужен установленный плеер, поддерживающий m4a")
+    }
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes >= MEGABYTE -> "%.1f МБ".format(bytes.toDouble() / MEGABYTE)
+    bytes >= KILOBYTE -> "${bytes / KILOBYTE} КБ"
+    else -> "$bytes Б"
+}
+
+private const val KILOBYTE = 1024L
+private const val MEGABYTE = 1024L * 1024L
 
 private fun attachMessage(context: Context, viewModel: SettingsViewModel, simSlot: Int, uri: Uri) {
     val persisted = try {

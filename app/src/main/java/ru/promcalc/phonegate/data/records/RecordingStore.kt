@@ -9,6 +9,15 @@ import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.logs.LogRepository
 
 /**
+ * Одна запись разговора на диске.
+ */
+data class RecordingInfo(
+    val file: File,
+    val sizeBytes: Long,
+    val modifiedAtMs: Long,
+)
+
+/**
  * Файлы записей разговоров: `files/records/rec-<дата>-sim<N>.m4a`.
  *
  * Хранятся последние `keepRecordings` файлов, остальные удаляются — иначе записи
@@ -31,6 +40,11 @@ class RecordingStore(
     fun list(): List<File> = (dir.listFiles() ?: emptyArray())
         .filter { it.isFile }
         .sortedBy { it.lastModified() }
+
+    /** Записи от новых к старым — в таком порядке их показывает интерфейс. */
+    fun listInfo(): List<RecordingInfo> = list()
+        .asReversed()
+        .map { file -> RecordingInfo(file = file, sizeBytes = file.length(), modifiedAtMs = file.lastModified()) }
 
     /** Удалить старые записи, оставив последние [keep]. Возвращает число удалённых файлов. */
     fun prune(keep: Int): Int {

@@ -1,6 +1,8 @@
 package ru.promcalc.phonegate.ui.settings
 
 import android.app.Application
+import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.promcalc.phonegate.data.logs.LogCategory
+import ru.promcalc.phonegate.data.records.RecordingInfo
+import ru.promcalc.phonegate.data.records.RecordingStore
 import ru.promcalc.phonegate.data.settings.Settings
 import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.service.GatewayService
@@ -54,6 +58,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
+    private val recordingStore = RecordingStore(application, application.logRepository)
+
+    private val _recordings = MutableStateFlow(recordingStore.listInfo())
+    val recordings: StateFlow<List<RecordingInfo>> = _recordings.asStateFlow()
+
+    /** Ссылка на запись для передачи плееру другого приложения. */
+    fun recordingUri(info: RecordingInfo): Uri = FileProvider.getUriForFile(
+        getApplication(),
+        "${getApplication<Application>().packageName}.files",
+        info.file,
+    )
+
     init {
         // Подхватываем изменения, сделанные вне экрана (например, запуск/остановка службы).
         viewModelScope.launch {
@@ -93,9 +109,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Показать сообщение под формой (используется экраном для подсказок). */
+    fun showMessage(text: String) {
+        _message.value = text
+    }
+
     fun refreshStatus() {
         _lastSuccessSyncAtMs.value = stateStore.load().lastSuccessSyncAtMs
         _pendingTasks.value = getApplication<Application>().taskStore.pending().size
+        _recordings.value = recordingStore.listInfo()
     }
 
     /**

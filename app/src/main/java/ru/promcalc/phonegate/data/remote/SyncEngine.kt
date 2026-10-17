@@ -358,18 +358,16 @@ class SyncEngine(
         return phones
     }
 
-    private fun windowStart(settings: Settings, lastSuccessSyncAtMs: Long): Long {
-        val base = maxOf(settings.historyStartAtMs, lastSuccessSyncAtMs)
-        // Небольшой нахлёст закрывает записи, попавшие в провайдер с задержкой.
-        val overlap = if (lastSuccessSyncAtMs > 0L) OVERLAP_MS else 0L
-        return (base - overlap).coerceAtLeast(0L)
-    }
+    private fun windowStart(settings: Settings, lastSuccessSyncAtMs: Long): Long =
+        SyncWindow.start(
+            historyStartAtMs = settings.historyStartAtMs,
+            lastSuccessSyncAtMs = lastSuccessSyncAtMs,
+        )
 
     private fun slotForPhone(simPhones: Map<Int, String>, key: String): Int? =
         simPhones.entries.firstOrNull { PhoneNumbers.same(it.value, key) }?.key
 
     private companion object {
-        const val OVERLAP_MS = 5L * 60 * 1000
         const val SYNC_ID_KEY = "sync_id"
     }
 }
