@@ -58,8 +58,11 @@ class GatewayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Страховка: обычно остановка приходит в приёмник (запуск службы из фона ограничен,
+        // а остановка разрешена всегда), но если команда всё же дошла сюда — гасим себя.
         if (intent?.action == GatewayCommandReceiver.ACTION_STOP) {
             GatewayServiceControl.setEnabled(this, enabled = false)
+            stopSelf()
             return START_NOT_STICKY
         }
         startLoop()
