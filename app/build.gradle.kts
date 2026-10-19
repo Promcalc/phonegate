@@ -32,8 +32,8 @@ android {
         // На targetSdk 34+ Android запрещает старт foreground-службы с типом microphone
         // из фона, а Android 15+ (targetSdk 35+) — ещё и старт dataSync-службы из BOOT_COMPLETED.
         targetSdk = 33
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

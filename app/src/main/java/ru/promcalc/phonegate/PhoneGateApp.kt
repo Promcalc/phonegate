@@ -2,6 +2,7 @@ package ru.promcalc.phonegate
 
 import android.app.Application
 import android.content.Context
+import ru.promcalc.phonegate.core.CrashLog
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.logs.LogRepository
 import ru.promcalc.phonegate.data.outgoing.OutgoingJournal
@@ -36,9 +37,32 @@ class PhoneGateApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        installCrashHandler()
         // Прогреваем настройки: на первом запуске фиксируется точка начала сбора данных.
         settingsRepository.current()
+        reportPreviousCrash()
         logRepository.info(LogCategory.SERVICE, "Приложение запущено")
+    }
+
+    /**
+     * Перед системным обработчиком (он показывает диалог «Приложение остановлено») сохраняем
+     * трейс локально: отчёт из системного диалога уходит в Google и нам недоступен.
+     */
+    private fun installCrashHandler() {
+        val systemHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            CrashLog.write(this, thread, error)
+            systemHandler?.uncaughtException(thread, error)
+        }
+    }
+
+    private fun reportPreviousCrash() {
+        val trace = CrashLog.readAndDelete(this) ?: return
+        logRepository.error(
+            LogCategory.CRASH,
+            "Приложение завершилось с ошибкой в прошлый раз",
+            trace,
+        )
     }
 
     companion object {

@@ -14,6 +14,7 @@ enum class LogCategory(val title: String) {
     SMS("SMS"),
     CALL_IN("Входящие звонки"),
     CALL_OUT("Исходящие звонки"),
+    CRASH("Сбои"),
 }
 
 /**

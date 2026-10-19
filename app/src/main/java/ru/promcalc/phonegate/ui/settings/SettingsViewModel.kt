@@ -11,9 +11,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.promcalc.phonegate.core.Time
 import ru.promcalc.phonegate.data.logs.LogCategory
 import ru.promcalc.phonegate.data.records.RecordingInfo
 import ru.promcalc.phonegate.data.records.RecordingStore
+import ru.promcalc.phonegate.data.remote.SyncWindow
 import ru.promcalc.phonegate.data.settings.Settings
 import ru.promcalc.phonegate.logRepository
 import ru.promcalc.phonegate.service.GatewayService
@@ -22,6 +24,16 @@ import ru.promcalc.phonegate.settingsRepository
 import ru.promcalc.phonegate.syncCoordinator
 import ru.promcalc.phonegate.syncStateStore
 import ru.promcalc.phonegate.taskStore
+
+/**
+ * Состояние обмена для карточки «Состояние»: что и с какого момента уйдёт в следующей отправке.
+ */
+data class SyncStatus(
+    val lastSuccessAtMs: Long = 0L,
+    val windowStartAtMs: Long = 0L,
+    val lastSmsId: Long = 0L,
+    val lastCallId: Long = 0L,
+)
 
 /**
  * Состояние экрана настроек: черновик, признак изменений, ошибки проверки и сообщения.
@@ -49,8 +61,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    private val _lastSuccessSyncAtMs = MutableStateFlow(stateStore.load().lastSuccessSyncAtMs)
-    val lastSuccessSyncAtMs: StateFlow<Long> = _lastSuccessSyncAtMs.asStateFlow()
+    private val _status = MutableStateFlow(loadStatus())
+    val status: StateFlow<SyncStatus> = _status.asStateFlow()
 
     private val _pendingTasks = MutableStateFlow(application.taskStore.pending().size)
     val pendingTasks: StateFlow<Int> = _pendingTasks.asStateFlow()
@@ -115,9 +127,25 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshStatus() {
-        _lastSuccessSyncAtMs.value = stateStore.load().lastSuccessSyncAtMs
-        _pendingTasks.value = getApplication<Application>().taskStore.pending().size
+        refreshSyncState()
         _recordings.value = recordingStore.listInfo()
+    }
+
+    /** Обновление карточки «Состояние» без чтения каталога записей (для периодического опроса). */
+    fun refreshSyncState() {
+        _status.value = loadStatus()
+        _pendingTasks.value = getApplication<Application>().taskStore.pending().size
+    }
+
+    private fun loadStatus(): SyncStatus {
+        val settings = repository.current()
+        val state = stateStore.load()
+        return SyncStatus(
+            lastSuccessAtMs = state.lastSuccessSyncAtMs,
+            windowStartAtMs = SyncWindow.start(settings.historyStartAtMs, state.lastSuccessSyncAtMs),
+            lastSmsId = state.lastSmsId,
+            lastCallId = state.lastCallId,
+        )
     }
 
     /**
@@ -188,7 +216,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         saved = candidate
         _dirty.value = false
         _message.value = if (historyChanged) {
-            "Сохранено. Курсор сбора данных сброшен, данные уйдут начиная с указанного момента"
+            val moment = Time.formatLocal(candidate.historyStartAtMs)
+            if (candidate.serviceEnabled) {
+                "Курсор сброшен: фоновый процесс отправит данные с $moment"
+            } else {
+                "Курсор сброшен: нажмите «Отправить сейчас» — уйдут данные с $moment"
+            }
         } else {
             "Настройки сохранены"
         }

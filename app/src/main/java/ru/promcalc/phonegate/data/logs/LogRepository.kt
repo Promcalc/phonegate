@@ -74,7 +74,15 @@ class LogRepository(context: Context) {
                 level = level,
                 category = category,
                 message = message.take(MAX_MESSAGE_LENGTH),
-                details = details?.take(MAX_DETAILS_LENGTH),
+                // Помечаем обрезку: иначе в интерфейсе кажется, что в запросе не было данных,
+                // хотя на сервер ушёл полный JSON.
+                details = details?.let { text ->
+                    if (text.length > MAX_DETAILS_LENGTH) {
+                        text.take(MAX_DETAILS_LENGTH) + "\n… (подробности обрезаны)"
+                    } else {
+                        text
+                    }
+                },
             )
             buffer.addLast(entry)
             while (buffer.size > MAX_ENTRIES_IN_MEMORY) {
@@ -130,12 +138,21 @@ class LogRepository(context: Context) {
                 null
             }
         }
+        if (restored.isEmpty()) return
+
         synchronized(lock) {
-            buffer.addAll(restored)
+            // Восстановленным записям выдаём отрицательные идентификаторы: пока файл читался,
+            // счётчик новых записей уже мог выдать положительные номера (первая запись
+            // «Приложение запущено» пишется сразу после создания репозитория). Совпадение
+            // идентификаторов ломало ключи списка на экране логов и роняло приложение.
+            val restoredWithLocalIds = restored.mapIndexed { index, entry ->
+                entry.copy(id = -(index + 1L))
+            }
+            // В буфере записи лежат от старых к новым, поэтому восстановленные идут в начало.
+            buffer.addAll(0, restoredWithLocalIds)
             while (buffer.size > MAX_ENTRIES_IN_MEMORY) {
                 buffer.removeFirst()
             }
-            nextId = (restored.maxOfOrNull { it.id } ?: 0L) + 1L
         }
     }
 

@@ -39,6 +39,8 @@ data class SyncOutcome(
         val parts = ArrayList<String>(4)
         parts += when {
             !exchangeAttempted -> "обмен не выполнялся"
+            exchangeOk && smsCount == 0 && callCount == 0 ->
+                "обмен выполнен: новых данных для отправки нет"
             exchangeOk -> "обмен выполнен (SMS: $smsCount, звонков: $callCount)"
             else -> "обмен не удался"
         }
@@ -181,7 +183,34 @@ class SyncEngine(
         log.info(
             LogCategory.HTTP,
             "Обмен: собрано SMS ${newSms.size}, звонков ${newCalls.size}",
-            "окно с ${Time.formatLocal(windowStartMs)}",
+            buildString {
+                appendLine("окно с ${Time.formatLocal(windowStartMs)}")
+                appendLine(
+                    "прочитано строк: SMS ${smsRows.size}, звонков ${callRows.size}; " +
+                        "в отчёт не вошло: SMS ${smsRows.size - newSms.size} " +
+                        "(не входящие или уже отправленные), " +
+                        "звонков ${callRows.size - newCalls.size} (уже отправленные)",
+                )
+                appendLine(
+                    "курсоры до: SMS #${state.lastSmsId}, звонки #${state.lastCallId}; " +
+                        "после успеха станут: SMS #$maxSmsId, звонки #$maxCallId",
+                )
+                simPhones.values.forEach { phone ->
+                    appendLine(
+                        "$phone: SMS ${smsByPhone.getValue(phone).size}, " +
+                            "звонков ${callsByPhone.getValue(phone).size}",
+                    )
+                }
+                append(
+                    "начало сбора: ${Time.formatLocal(settings.historyStartAtMs)}, " +
+                        "последняя успешная отправка: " +
+                        if (state.lastSuccessSyncAtMs > 0L) {
+                            Time.formatLocal(state.lastSuccessSyncAtMs)
+                        } else {
+                            "ещё не было"
+                        },
+                )
+            },
         )
 
         val result = api.postJson(
@@ -194,7 +223,19 @@ class SyncEngine(
 
         return when (result) {
             is ApiResult.Ok -> {
-                stateStore.onExchangeSuccess(startedAtMs, maxSmsId, maxCallId)
+                val applied = stateStore.onExchangeSuccess(
+                    syncStartAtMs = startedAtMs,
+                    lastSmsId = maxSmsId,
+                    lastCallId = maxCallId,
+                    expectedResetVersion = state.resetVersion,
+                )
+                if (!applied) {
+                    log.warn(
+                        LogCategory.HTTP,
+                        "Во время обмена сброшены курсоры — результат не применён, данные уйдут повторно",
+                        "Сервер отчёт принял; повторная отправка безопасна благодаря sync_id",
+                    )
+                }
                 val commands = parseCommands(result.body, simPhones)
                 SyncOutcome(
                     exchangeAttempted = true,
@@ -337,7 +378,17 @@ class SyncEngine(
 
         return when (result) {
             is ApiResult.Ok -> {
-                stateStore.onOutgoingSuccess(startedAtMs, maxRecordId)
+                val applied = stateStore.onOutgoingSuccess(
+                    syncStartAtMs = startedAtMs,
+                    lastRecordId = maxRecordId,
+                    expectedResetVersion = state.resetVersion,
+                )
+                if (!applied) {
+                    log.warn(
+                        LogCategory.HTTP,
+                        "Во время отчёта об исходящих сброшены курсоры — результат не применён",
+                    )
+                }
                 SyncOutcome(outgoingAttempted = true, outgoingOk = true)
             }
 

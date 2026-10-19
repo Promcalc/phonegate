@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import ru.promcalc.phonegate.core.Files
 import ru.promcalc.phonegate.core.Time
 import ru.promcalc.phonegate.data.records.RecordingInfo
@@ -55,14 +56,21 @@ fun SettingsScreen() {
     val dirty by viewModel.dirty.collectAsStateWithLifecycle()
     val errors by viewModel.errors.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
-    val lastSyncAtMs by viewModel.lastSuccessSyncAtMs.collectAsStateWithLifecycle()
+    val status by viewModel.status.collectAsStateWithLifecycle()
     val pendingTasks by viewModel.pendingTasks.collectAsStateWithLifecycle()
     val sending by viewModel.sending.collectAsStateWithLifecycle()
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(Unit) { viewModel.refreshStatus() }
+    LaunchedEffect(Unit) {
+        // Пока экран открыт, обновляем состояние: фоновый процесс мог отправить данные
+        // самостоятельно, и «Последняя успешная отправка» должна это показать.
+        while (true) {
+            viewModel.refreshSyncState()
+            delay(STATUS_REFRESH_MS)
+        }
+    }
     LaunchedEffect(message) {
         message?.let {
             snackbarHostState.showSnackbar(it)
@@ -101,7 +109,7 @@ fun SettingsScreen() {
                 item { ErrorsCard(errors) }
             }
 
-            item { StatusCard(lastSyncAtMs, pendingTasks) }
+            item { StatusCard(status, pendingTasks) }
 
             item { SectionTitle("Обмен с сервером") }
             item {
@@ -380,6 +388,9 @@ fun SettingsScreen() {
 /** Сколько записей показывать в списке настроек. */
 private const val RECORDINGS_PREVIEW = 5
 
+/** Период обновления карточки «Состояние», пока экран настроек открыт. */
+private const val STATUS_REFRESH_MS = 5_000L
+
 private fun openRecording(context: Context, viewModel: SettingsViewModel, recording: RecordingInfo) {
     try {
         val uri = viewModel.recordingUri(recording)
@@ -445,17 +456,30 @@ private fun ErrorsCard(problems: List<String>) {
 }
 
 @Composable
-private fun StatusCard(lastSyncAtMs: Long, pendingTasks: Int) {
+private fun StatusCard(status: SyncStatus, pendingTasks: Int) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Состояние", style = MaterialTheme.typography.titleSmall)
             Text(
-                text = if (lastSyncAtMs > 0L) {
-                    "Последняя успешная отправка: ${Time.formatLocal(lastSyncAtMs)}"
+                text = if (status.lastSuccessAtMs > 0L) {
+                    "Последняя успешная отправка: ${Time.formatLocal(status.lastSuccessAtMs)}"
                 } else {
                     "Успешных отправок ещё не было"
                 },
                 style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = if (status.windowStartAtMs > 0L) {
+                    "Следующая отправка возьмёт данные с ${Time.formatLocal(status.windowStartAtMs)}"
+                } else {
+                    "Точка начала сбора данных ещё не задана"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "Курсоры: SMS №${status.lastSmsId}, звонки №${status.lastCallId}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = "Задач в очереди: $pendingTasks",
