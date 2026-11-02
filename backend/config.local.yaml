@@ -1,0 +1,156 @@
+# PhoneGate Backend B0/B1 development configuration.
+#
+#   go run ./cmd/server -config config.example.yaml
+#
+# API key: test-tenant-key
+# Gateway token: test-gateway-token
+#
+# Change both secrets before exposing the server. The documented production
+# example with SQLite/PostgreSQL lives in ../docs/backend/config.example.yaml.
+
+version: 1
+
+server:
+  listen: ":8888"
+  public_url: "http://192.168.1.16:8888"
+  read_timeout: 10s
+  write_timeout: 15s
+  idle_timeout: 60s
+  max_body_bytes: 1048576
+  trusted_proxies: []
+
+storage:
+  driver: memory
+  dsn: ""
+  retention:
+    sessions_days: 30
+    events_days: 7
+    api_calls_days: 7
+    webhook_days: 30
+    audit_days: 365
+
+logging:
+  level: info
+  format: json
+  mask_phones: true
+  access_log: true
+  # Сырой JSON от Android-шлюза в лог (номера и тексты SMS). Только отладка.
+  log_gateway_payload: true
+
+gateway:
+  auth_headers: ["Authorization"]
+  auto_register_numbers: true
+  require_approval: false
+  offline_after: 90s
+  max_numbers_per_gateway: 4
+  max_body_events:
+    sms: 500
+    calls: 1000
+  # false — сохранять события с невалидными номерами в журнал для диагностики.
+  validate_peer_numbers: false
+
+verification:
+  default_ttl: 5m
+  max_ttl: 15m
+  code_length: 6
+  max_attempts: 3
+  retry_interval: 10s
+  max_active_sms_per_phone: 10
+  one_active_call_per_gateway: true
+  sticky: true
+  clock_skew: 2m
+  selection: least_loaded
+  max_pending_per_number: 50
+  max_assignments_per_hour: 120
+  code_first:
+    enabled: true
+    ttl: 10m
+    code_format: alnum
+    code_length: 8
+    code_alphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code_words: 4
+    max_active_per_tenant: 1000
+    max_wrong_codes_per_phone: 5
+    wrong_codes_window: 1h
+  sms:
+    code_regex: '(?i)(?:^|\D)([0-9]{6})(?:\D|$)'
+  call:
+    allow_missed: true
+    allow_answered: true
+    min_duration_seconds: 0
+  links:
+    enabled: true
+    secret: "dev-links-secret-please-change-32-bytes"
+    page_path: "/v"
+    qr_size: 320
+    qr_margin: 2
+    qr_error_correction: medium
+    rate_limit_per_min: 60
+
+pools:
+  demo:
+    numbers:
+      - "+79153350606"
+
+tenants:
+  demo:
+    name: "Demo tenant"
+    enabled: true
+    pools: ["demo"]
+    allowed_countries: []
+    auth:
+      api_key_sha256: "6f60060add40212a54118c66e4ebe05f399494428d155bfecf472cf544313f71"
+      api_key_sha256_previous: ""
+      ip_allowlist: []
+      hmac_secret: ""
+    verification:
+      methods: ["sms", "call", "any"]
+      default_method: "sms"
+      ttl: 5m
+      code_length: 6
+      max_attempts: 3
+    webhook:
+      url: ""
+      secret: ""
+      events:
+        - "verification.verified"
+        - "verification.expired"
+        - "verification.failed"
+      timeout: 10s
+      allowed_callback_urls: []
+    rate_limits:
+      per_phone: {requests: 10, window: 1h}
+      per_ip: {requests: 120, window: 1h}
+      per_tenant: {requests: 600, window: 1m}
+
+gateways:
+  - id: "gw_demo_1"
+    name: "Demo gateway"
+    token_sha256: "12aa95c7f650574b0c524041507d7ad17bcc08f5e5afd66123e6af767ff1eb5e"
+    pool: "demo"
+    enabled: true
+
+admin:
+  enabled: false
+  token_sha256: ""
+  ip_allowlist: []
+  listen: ""
+
+webhook:
+  allow_private: false
+  allow_insecure: false
+  max_attempts: 5
+  backoff: ["1s", "5s", "30s", "2m", "10m"]
+  workers: 8
+
+security:
+  global_ip_rps: 50
+  require_https: false
+  max_json_depth: 32
+  idempotency_ttl: 24h
+  hmac_skew: 5m
+
+metrics:
+  enabled: false
+  listen: ""
+  path: "/metrics"

@@ -1,0 +1,245 @@
+# Пример конфигурации PhoneGate Backend.
+#
+# Запуск: phonegate-server -config config.yaml
+# Проверка: phonegate-server -config config.yaml -check
+#
+# Секреты подставляются из окружения: ${VAR} или ${VAR:-default}.
+# В репозитории держите только этот пример, реальные значения — в env/secret-файлах.
+
+version: 1
+
+server:
+  listen: ":8080"
+  # Публичный URL: ссылки подтверждения, QR и кнопки Telegram. Для Telegram — HTTPS.
+  public_url: "https://auth.example.com"
+  read_timeout: 10s
+  write_timeout: 15s
+  idle_timeout: 60s
+  max_body_bytes: 1048576
+  # Доверять X-Forwarded-For только от этих адресов (reverse proxy).
+  trusted_proxies: ["127.0.0.1/32", "10.0.0.0/8"]
+  # TLS можно включить здесь или оставить reverse proxy.
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+storage:
+  # memory — без истории, всё теряется при рестарте;
+  # sqlite — один файл, рекомендуется для старта;
+  # postgres — для HA и нескольких инстансов.
+  driver: sqlite
+  # Docker: /data/phonegate.db; systemd/Linux: /var/lib/phonegate/phonegate.db
+  dsn: "/data/phonegate.db"
+  # Для postgres: "postgres://phonegate:${DB_PASSWORD}@db:5432/phonegate?sslmode=require"
+  max_open_conns: 10
+  busy_timeout: 5s
+  retention:
+    sessions_days: 30
+    events_days: 7
+    api_calls_days: 7
+    webhook_days: 30
+    audit_days: 365
+  # Хранить текст SMS после матчинга. По умолчанию false: только хэш и факт.
+  store_sms_text: false
+  # Хранить сырые JSON запросов обмена (для отладки; содержит PII).
+  store_raw_exchange: false
+
+logging:
+  level: info          # debug | info | warn | error
+  format: json         # json | text (text — только для локальной разработки)
+  mask_phones: true
+  access_log: true
+  # Писать в лог сырой JSON запроса /exchange (содержит номера и тексты SMS).
+  # Только для отладки: в production оставляйте false.
+  log_gateway_payload: false
+
+gateway:
+  # Имена заголовков, в которых приложение передаёт токен.
+  auth_headers: ["Authorization"]
+  # Автоматически регистрировать номера из ключей обмена.
+  auto_register_numbers: true
+  # true — новые номера ждут подтверждения администратора;
+  # false — сразу active в пуле шлюза (только для доверенной сети).
+  require_approval: true
+  # Шлюз считается офлайн, если не было обмена дольше этого времени.
+  offline_after: 90s
+  max_numbers_per_gateway: 4
+  # Разрешить перенос номера на другой шлюз (старый должен быть офлайн).
+  allow_number_move: false
+  max_body_events:
+    sms: 500
+    calls: 1000
+  # Проверять номера отправителей SMS/звонящих и приводить их к E.164.
+  # false — события с буквенными/некорректными номерами сохраняются в журнал
+  # для отладки, но не участвуют в подтверждении заявок.
+  validate_peer_numbers: true
+
+verification:
+  default_ttl: 300s
+  max_ttl: 900s
+  code_length: 6
+  max_attempts: 3
+  retry_interval: 30s
+  # SMS: несколько активных заявок на один телефон; код различает их.
+  max_active_sms_per_phone: 10
+  # call/any: не более одной активной заявки на пару «телефон + номер шлюза».
+  one_active_call_per_gateway: true
+  # Сохранять номер шлюза при повторной заявке того же телефона (если есть место).
+  sticky: true
+  # Допустимое расхождение часов устройства и сервера.
+  clock_skew: 120s
+  # least_loaded | round_robin | random
+  selection: least_loaded
+  max_pending_per_number: 50
+  max_assignments_per_hour: 120
+  # Режим «номер неизвестен»: Telegram-бот и подобные сценарии.
+  code_first:
+    enabled: true
+    ttl: 600s
+    # alnum | digits | words; во всех случаях генерирует сервер.
+    code_format: alnum
+    # 8 символов из 32 (≈40 бит) для alnum/digits.
+    code_length: 8
+    code_alphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    # Для code_format=words: сколько слов в коде.
+    code_words: 4
+    max_active_per_tenant: 1000
+    # Сколько SMS с неверным кодом терпеть с одного отправителя за окно.
+    max_wrong_codes_per_phone: 5
+    wrong_codes_window: 1h
+  sms:
+    # Код ищется как отдельное число в тексте (phone_first).
+    code_regex: '(?i)(?:^|\D)([0-9]{6})(?:\D|$)'
+  call:
+    allow_missed: true
+    allow_answered: true
+    # Минимальная длительность для answered; 0 — не проверять.
+    min_duration_seconds: 0
+  # Публичная страница подтверждения, ссылки sms:/tel: и QR.
+  links:
+    enabled: true
+    # HMAC-ключ для токенов страницы и QR. Одинаковый на всех инстансах.
+    # В production задайте через переменную окружения; не коммитьте.
+    secret: "${LINKS_SECRET}"
+    # Путь страницы; итоговый URL: ${server.public_url}${page_path}/{token}
+    page_path: "/v"
+    qr_size: 320
+    qr_margin: 2
+    # low | medium | high | highest
+    qr_error_correction: medium
+    # Лимит публичных запросов на IP и токен.
+    rate_limit_per_min: 60
+
+# Пулы номеров. Один номер может быть только в одном пуле.
+pools:
+  shop:
+    numbers:
+      - "+79005550001"
+      - "+79005550002"
+  bank:
+    numbers:
+      - "+79005550101"
+
+tenants:
+  shop:
+    name: "Магазин"
+    enabled: true
+    pools: ["shop"]
+    allowed_countries: ["RU"]
+    auth:
+      # SHA-256 от API-ключа (hex). Сам ключ выдаётся арендатору один раз.
+      api_key_sha256: "${SHOP_API_KEY_SHA256}"
+      # Второй ключ на время ротации; можно не задавать.
+      api_key_sha256_previous: "${SHOP_API_KEY_SHA256_OLD:-}"
+      ip_allowlist: ["203.0.113.10/32"]
+      # HMAC-подпись запросов (рекомендуется в production).
+      hmac_secret: "${SHOP_HMAC_SECRET:-}"
+    verification:
+      methods: ["sms", "call"]
+      default_method: "sms"
+      ttl: 300s
+      code_length: 6
+      max_attempts: 3
+    webhook:
+      url: "https://shop.example/auth/callback"
+      secret: "${SHOP_WEBHOOK_SECRET}"
+      events:
+        - "verification.verified"
+        - "verification.expired"
+        - "verification.failed"
+      timeout: 10s
+      # Переопределение callback_url из запроса разрешено только на эти адреса.
+      allowed_callback_urls: []
+    rate_limits:
+      per_phone: {requests: 5, window: 1h}
+      per_ip: {requests: 60, window: 1h}
+      per_tenant: {requests: 600, window: 1m}
+
+  bank:
+    name: "Банк"
+    enabled: true
+    pools: ["bank"]
+    allowed_countries: ["RU"]
+    auth:
+      api_key_sha256: "${BANK_API_KEY_SHA256}"
+      ip_allowlist: ["198.51.100.0/24"]
+    verification:
+      methods: ["sms"]
+      default_method: "sms"
+      ttl: 600s
+    webhook:
+      url: "https://bank.example/phonegate/events"
+      secret: "${BANK_WEBHOOK_SECRET}"
+      events: ["verification.verified", "verification.expired"]
+    rate_limits:
+      per_phone: {requests: 3, window: 1h}
+      per_ip: {requests: 30, window: 1h}
+      per_tenant: {requests: 300, window: 1m}
+
+# Шлюзы можно предварительно завести здесь, чтобы токен сразу был известен.
+# Номера всё равно подхватятся из обмена и попадут в пул шлюза.
+gateways:
+  - id: "gw_shop_1"
+    name: "Магазин, телефон 1"
+    token_sha256: "${GW_SHOP_1_TOKEN_SHA256}"
+    pool: "shop"
+    enabled: true
+  - id: "gw_bank_1"
+    name: "Банк, телефон 1"
+    token_sha256: "${GW_BANK_1_TOKEN_SHA256}"
+    pool: "bank"
+    enabled: true
+
+admin:
+  enabled: true
+  # Отдельный префикс; в production — отдельный порт/IP allowlist.
+  token_sha256: "${ADMIN_TOKEN_SHA256}"
+  ip_allowlist: ["127.0.0.1/32", "10.0.0.0/8"]
+  listen: ""             # пусто — тот же порт; ":8081" — отдельный
+
+webhook:
+  allow_private: false
+  allow_insecure: false
+  max_attempts: 5
+  # Задержки повторов; последняя повторяется до max_attempts.
+  backoff: ["1s", "5s", "30s", "2m", "10m"]
+  # Ограничение одновременных доставок.
+  workers: 8
+
+security:
+  # Лимит запросов на IP для всех эндпоинтов (грубая защита).
+  global_ip_rps: 50
+  # Требовать HTTPS для публичного API (за reverse proxy проверяется по X-Forwarded-Proto).
+  require_https: true
+  # Максимальная глубина JSON.
+  max_json_depth: 32
+  # Время жизни idempotency-ключа.
+  idempotency_ttl: 24h
+  # Окно допустимого timestamp для HMAC.
+  hmac_skew: 300s
+
+metrics:
+  enabled: true
+  listen: "127.0.0.1:9090"
+  path: "/metrics"

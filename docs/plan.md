@@ -7,6 +7,10 @@ Android-приложение для телефона-шлюза: обменив�
 Исходное ТЗ: [tz.txt](tz.txt). API: [api/openapi.yaml](api/openapi.yaml).
 Журнал принятых решений: [decisions.md](decisions.md).
 
+Бэкенд-сервис авторизации по телефону (приём звонков/SMS шлюзами, API для внешних
+проектов): [backend/tz.md](backend/tz.md). Привязка номера в Telegram-боте:
+[backend/telegram.md](backend/telegram.md).
+
 ## 1. Границы этапа
 
 Входит: обмен данными, планирование и исполнение исходящих действий, обработка входящих

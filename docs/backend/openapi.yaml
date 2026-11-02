@@ -1,0 +1,600 @@
+openapi: 3.0.3
+info:
+  title: PhoneGate Backend — публичный API
+  version: 1.0.0
+  description: |
+    API внешних сервисов (арендаторов) для авторизации по телефону.
+
+    Бэкенд не отправляет SMS и не совершает звонков. Пользователь сам звонит
+    на номер шлюза или отправляет SMS с кодом; шлюз принимает событие и передаёт
+    его на бэкенд.
+
+    Два режима заявки:
+
+    - `phone_first` — номер известен, пользователь подтверждает его SMS/звонком;
+    - `code_first` — номер неизвестен (Telegram-бот): пользователь отправляет SMS
+      с кодом, бэкенд возвращает номер отправителя.
+
+    В ответе на создание/повтор есть `links`: готовые `sms:`/`tel:` ссылки, публичная
+    страница и QR. Они содержат одноразовый код, поэтому в `GET` их нет.
+
+    Аутентификация — `Authorization: Bearer <tenant_api_key>`.
+    Опционально — HMAC-подпись запроса (см. ТЗ, раздел 14.3).
+
+    Все времена — UTC, RFC 3339.
+  contact:
+    name: PhoneGate
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://auth.example.com/api/v1
+    description: Production
+  - url: http://localhost:8080/api/v1
+    description: Локальная разработка
+
+tags:
+  - name: verifications
+    description: Заявки на подтверждение номера
+  - name: service
+    description: Служебные методы
+
+security:
+  - TenantApiKey: []
+
+paths:
+  /verifications:
+    post:
+      tags: [verifications]
+      operationId: createVerification
+      summary: Создать заявку на подтверждение номера
+      description: |
+        Создаёт заявку, выбирает номер шлюза из пула арендатора и возвращает
+        инструкцию для пользователя.
+
+        Для идемпотентности передайте `Idempotency-Key`. Повтор с тем же ключом
+        и тем же телом вернёт ту же заявку; с другим телом — `409 idempotency_conflict`.
+
+        Если у номера уже есть активная заявка (обязательно для звонка), вернётся
+        `409 verification_already_pending` с существующей заявкой.
+
+        Режимы:
+
+        - `phone_first` (по умолчанию) — номер известен, `phone` обязателен;
+        - `code_first` — номер неизвестен: бот/сервис получает код и номер шлюза,
+          пользователь отправляет SMS, PhoneGate возвращает номер отправителя.
+          В этом режиме `phone` не передаётся, `method` только `sms`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: replace
+          in: query
+          required: false
+          description: Отменить существующую активную заявку и создать новую.
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVerificationRequest'
+            examples:
+              sms:
+                summary: SMS-авторизация
+                value:
+                  phone: "+79001234567"
+                  method: sms
+                  purpose: login
+                  locale: ru
+                  metadata:
+                    user_id: "42"
+              call:
+                summary: Звонок
+                value:
+                  phone: "+79001234567"
+                  method: call
+                  purpose: login
+              code_first:
+                summary: "Telegram-бот: номер узнаём из SMS"
+                value:
+                  mode: code_first
+                  method: sms
+                  purpose: telegram_bind
+                  locale: ru
+                  ttl_seconds: 600
+                  metadata:
+                    telegram_user_id: 123456789
+      responses:
+        '201':
+          description: Заявка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Активная заявка уже есть или конфликт Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Нет доступного номера шлюза
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [verifications]
+      operationId: listVerifications
+      summary: Список заявок арендатора
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [phone_first, code_first]
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/VerificationStatus'
+        - name: phone
+          in: query
+          schema:
+            type: string
+            example: "+79001234567"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Страница заявок
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Verification'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /verifications/{id}:
+    get:
+      tags: [verifications]
+      operationId: getVerification
+      summary: Статус заявки
+      parameters:
+        - $ref: '#/components/parameters/VerificationId'
+      responses:
+        '200':
+          description: Заявка
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /verifications/{id}/cancel:
+    post:
+      tags: [verifications]
+      operationId: cancelVerification
+      summary: Отменить заявку
+      description: Идемпотентно; отменить можно только заявку в статусе `pending`.
+      parameters:
+        - $ref: '#/components/parameters/VerificationId'
+      responses:
+        '200':
+          description: Заявка отменена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Заявка уже завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /verifications/{id}/retry:
+    post:
+      tags: [verifications]
+      operationId: retryVerification
+      summary: Создать новую заявку вместо текущей
+      description: |
+        Старая заявка отменяется, создаётся новая с тем же телефоном, пулом
+        и метаданными, но новым кодом и TTL. Не чаще `retry_interval`.
+      parameters:
+        - $ref: '#/components/parameters/VerificationId'
+      responses:
+        '201':
+          description: Новая заявка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /me:
+    get:
+      tags: [service]
+      operationId: getMe
+      summary: Информация об арендаторе и лимитах
+      responses:
+        '200':
+          description: Арендатор
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /healthz:
+    get:
+      tags: [service]
+      operationId: healthz
+      summary: Живость процесса
+      security: []
+      responses:
+        '200':
+          description: Процесс жив
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      tags: [service]
+      operationId: readyz
+      summary: Готовность (БД, конфигурация)
+      security: []
+      responses:
+        '200':
+          description: Готов
+        '503':
+          description: Не готов
+
+components:
+  securitySchemes:
+    TenantApiKey:
+      type: http
+      scheme: bearer
+      description: API-ключ арендатора (32+ байта).
+
+  parameters:
+    VerificationId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^vrf_[A-Za-z0-9]+$'
+        example: vrf_01JABCDEFGHJKMNPQRSTVWXYZ0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: UUID; хранится 24 часа.
+      schema:
+        type: string
+        maxLength: 64
+
+  responses:
+    BadRequest:
+      description: Невалидный запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Нет или неверный API-ключ
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Доступ запрещён (IP, выключенный арендатор)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Заявка не найдена
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Превышен лимит
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    CreateVerificationRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        `phone` обязателен для `mode=phone_first` и запрещён для `mode=code_first`.
+        Для `code_first` `method` может быть только `sms`.
+      properties:
+        mode:
+          type: string
+          enum: [phone_first, code_first]
+          default: phone_first
+          description: |
+            `phone_first` — номер известен заранее.
+            `code_first` — номер узнаём из входящей SMS с кодом.
+        phone:
+          type: string
+          description: Номер пользователя в E.164; обязателен для `phone_first`.
+          example: "+79001234567"
+          maxLength: 32
+        method:
+          type: string
+          enum: [sms, call, any]
+          default: sms
+          description: Для `code_first` допустим только `sms`.
+        purpose:
+          type: string
+          enum: [login, signup, confirm, recovery, telegram_bind]
+        locale:
+          type: string
+          enum: [ru, en]
+          default: ru
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 900
+        callback_url:
+          type: string
+          format: uri
+          description: Только из allowlist арендатора.
+        metadata:
+          type: object
+          maxProperties: 32
+          additionalProperties: true
+          description: ≤ 4 КиБ; возвращается как есть.
+
+    Verification:
+      type: object
+      required: [id, mode, status, method, gateway_number, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          example: vrf_01JABCDEFGHJKMNPQRSTVWXYZ0
+        mode:
+          type: string
+          enum: [phone_first, code_first]
+          example: phone_first
+        status:
+          $ref: '#/components/schemas/VerificationStatus'
+        method:
+          type: string
+          enum: [sms, call, any]
+        phone:
+          type: string
+          nullable: true
+          description: |
+            Номер пользователя. Для `code_first` — `null`, пока SMS не сопоставлена.
+          example: "+79001234567"
+        gateway_number:
+          type: string
+          example: "+79005550001"
+        code:
+          type: string
+          nullable: true
+          description: |
+            Код для SMS/any. Возвращается только в ответе на создание заявки;
+            в `GET` отсутствует. Для `code_first` генерируется сервером.
+          example: "482913"
+        instructions:
+          type: string
+          example: "Отправьте SMS с кодом 482913 на номер +79005550001"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          enum: [too_many_attempts, gateway_error, rejected]
+        poll_after_ms:
+          type: integer
+          example: 3000
+        links:
+          $ref: '#/components/schemas/VerificationLinks'
+        metadata:
+          type: object
+          additionalProperties: true
+
+    VerificationLinks:
+      type: object
+      description: |
+        Ссылки для пользователя. Возвращаются только в ответе на создание или повтор
+        заявки, потому что SMS-ссылки содержат одноразовый код; в `GET` отсутствуют.
+        В Telegram inline-кнопки с `sms:`/`tel:` ненадёжны: используйте `page_url`.
+      required: [page_url, qr_url]
+      properties:
+        sms_uri:
+          type: string
+          nullable: true
+          description: |
+            `sms:<номер>?body=<URL-encoded код>` (RFC 5724, Android и большинство
+            клиентов). Для `code_first` и `method=sms|any`.
+          example: "sms:+79005550001?body=482913"
+        sms_uri_ios:
+          type: string
+          nullable: true
+          description: |
+            Вариант для iOS: `sms:<номер>&body=<код>`; некоторые iOS-клиенты
+            не понимают `?body`.
+          example: "sms:+79005550001&body=482913"
+        tel_uri:
+          type: string
+          nullable: true
+          description: |
+            `tel:<номер>` (RFC 3966). Открывает dialer, но не совершает звонок.
+            Для `method=call|any`.
+          example: "tel:+79005550001"
+        page_url:
+          type: string
+          format: uri
+          description: |
+            HTTPS-страница с кнопками SMS/звонка, копированием и статусом.
+            Используется как inline URL в Telegram и в браузере.
+          example: "https://auth.example.com/v/vt_01JABCDEFGHJKMNPQRSTVWXYZ0"
+        qr_url:
+          type: string
+          format: uri
+          description: |
+            PNG с QR-кодом. Внутри `sms_uri` для `sms|any`, `tel_uri` для `call`.
+            Некоторые сканеры Android показывают `sms:` как обычный текст;
+            для демо и мобильных сценариев используйте `sms_qr_url`/`tel_qr_url`.
+          example: "https://auth.example.com/v/vt_01JABCDEFGHJKMNPQRSTVWXYZ0/qr.png"
+        sms_qr_url:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            PNG с QR-кодом, ведущим на HTTPS-страницу с кнопкой открытия SMS.
+            Такой QR надёжно открывается камерой Android. Для `method=sms|any`.
+          example: "https://auth.example.com/v/vt_01JABCDEFGHJKMNPQRSTVWXYZ0/qr.png?kind=sms"
+        tel_qr_url:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            PNG с QR-кодом, ведущим на HTTPS-страницу с кнопкой звонка.
+            Для `method=call|any`.
+          example: "https://auth.example.com/v/vt_01JABCDEFGHJKMNPQRSTVWXYZ0/qr.png?kind=call"
+
+    VerificationStatus:
+      type: string
+      enum: [pending, verified, expired, cancelled, failed]
+
+    TenantInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: shop
+        name:
+          type: string
+          example: Магазин
+        enabled:
+          type: boolean
+        pools:
+          type: array
+          items:
+            type: string
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [sms, call, any]
+        modes:
+          type: array
+          items:
+            type: string
+            enum: [phone_first, code_first]
+        limits:
+          type: object
+          additionalProperties: true
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - invalid_phone
+                - unauthorized
+                - forbidden
+                - not_found
+                - verification_already_pending
+                - idempotency_conflict
+                - phone_required
+                - phone_not_allowed
+                - code_first_sms_only
+                - rate_limited
+                - no_gateway_available
+                - internal
+            message:
+              type: string
+            request_id:
+              type: string
+            retry_after_ms:
+              type: integer
