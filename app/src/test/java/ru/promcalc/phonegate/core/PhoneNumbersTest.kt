@@ -36,4 +36,28 @@ class PhoneNumbersTest {
         assertEquals("79001234567", PhoneNumbers.normalize("+7 (900) 123-45-67"))
         assertEquals("Beeline", PhoneNumbers.normalize("Beeline"))
     }
+
+    @Test
+    fun `E164 принимает российские форматы`() {
+        assertEquals("+79001234567", PhoneNumbers.e164OrNull("+7 (900) 123-45-67"))
+        assertEquals("+79001234567", PhoneNumbers.e164OrNull("79001234567"))
+        assertEquals("+79001234567", PhoneNumbers.e164OrNull("89001234567"))
+        assertEquals("+79001234567", PhoneNumbers.e164OrNull("9001234567"))
+    }
+
+    @Test
+    fun `E164 сохраняет международный номер`() {
+        assertEquals("+442071838750", PhoneNumbers.e164OrNull("+44 20 7183 8750"))
+        assertEquals("+442071838750", PhoneNumbers.e164OrNull("00 44 20 7183 8750"))
+    }
+
+    @Test
+    fun `E164 отклоняет буквы и некорректные номера`() {
+        assertEquals(null, PhoneNumbers.e164OrNull("Beeline"))
+        assertEquals(null, PhoneNumbers.e164OrNull("SBER"))
+        assertEquals(null, PhoneNumbers.e164OrNull(""))
+        assertEquals(null, PhoneNumbers.e164OrNull("+0123456789"))
+        assertEquals(null, PhoneNumbers.e164OrNull("+123"))
+        assertEquals(null, PhoneNumbers.e164OrNull("1234567890123456"))
+    }
 }

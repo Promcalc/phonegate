@@ -20,6 +20,12 @@ data class Settings(
     val authHeaderName: String = "Authorization",
     /** Значение заголовка авторизации, например `Bearer abc123`. */
     val authHeaderValue: String = "",
+    /**
+     * Не отправлять записи, у которых номер отправителя SMS или звонящего не
+     * приводится к E.164 (например, буквенные имена отправителей и служебные
+     * номера). Такие записи всё равно считаются прочитанными: курсор сдвигается.
+     */
+    val skipInvalidNumbers: Boolean = true,
     /** Номер телефона первой SIM. */
     val sim1Phone: String = "",
     /** Номер телефона второй SIM. */

@@ -226,6 +226,28 @@ fun SettingsScreen() {
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Не отправлять номера не в формате E.164")
+                        Text(
+                            text = "Записи с буквенными и некорректными номерами отправителей " +
+                                "SMS/звонящих (а также номера SIM) будут пропущены, курсор сдвинется",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = draft.skipInvalidNumbers,
+                        onCheckedChange = { checked ->
+                            viewModel.update { it.copy(skipInvalidNumbers = checked) }
+                        },
+                    )
+                }
+            }
 
             item { SectionTitle("SIM-карты") }
             item {

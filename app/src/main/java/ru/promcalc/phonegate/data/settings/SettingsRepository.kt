@@ -44,6 +44,7 @@ class SettingsRepository(context: Context) {
             .putString(KEY_OUTGOING_REPORT_URL, settings.outgoingReportUrl)
             .putString(KEY_AUTH_HEADER_NAME, settings.authHeaderName)
             .putString(KEY_AUTH_HEADER_VALUE, settings.authHeaderValue)
+            .putBoolean(KEY_SKIP_INVALID_NUMBERS, settings.skipInvalidNumbers)
             .putString(KEY_SIM1_PHONE, settings.sim1Phone)
             .putString(KEY_SIM2_PHONE, settings.sim2Phone)
             .putInt(KEY_ANSWER_AFTER_SECONDS, settings.answerAfterSeconds)
@@ -69,6 +70,7 @@ class SettingsRepository(context: Context) {
             outgoingReportUrl = prefs.getString(KEY_OUTGOING_REPORT_URL, defaults.outgoingReportUrl).orEmpty(),
             authHeaderName = prefs.getString(KEY_AUTH_HEADER_NAME, defaults.authHeaderName).orEmpty(),
             authHeaderValue = prefs.getString(KEY_AUTH_HEADER_VALUE, defaults.authHeaderValue).orEmpty(),
+            skipInvalidNumbers = prefs.getBoolean(KEY_SKIP_INVALID_NUMBERS, defaults.skipInvalidNumbers),
             sim1Phone = prefs.getString(KEY_SIM1_PHONE, defaults.sim1Phone).orEmpty(),
             sim2Phone = prefs.getString(KEY_SIM2_PHONE, defaults.sim2Phone).orEmpty(),
             answerAfterSeconds = prefs.getInt(KEY_ANSWER_AFTER_SECONDS, defaults.answerAfterSeconds),
@@ -93,6 +95,7 @@ class SettingsRepository(context: Context) {
         const val KEY_OUTGOING_REPORT_URL = "outgoing_report_url"
         const val KEY_AUTH_HEADER_NAME = "auth_header_name"
         const val KEY_AUTH_HEADER_VALUE = "auth_header_value"
+        const val KEY_SKIP_INVALID_NUMBERS = "skip_invalid_numbers"
         const val KEY_SIM1_PHONE = "sim1_phone"
         const val KEY_SIM2_PHONE = "sim2_phone"
         const val KEY_ANSWER_AFTER_SECONDS = "answer_after_seconds"

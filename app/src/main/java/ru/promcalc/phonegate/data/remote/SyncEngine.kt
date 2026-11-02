@@ -58,6 +58,50 @@ data class SyncOutcome(
 }
 
 /**
+ * Отбор записей отчёта по номеру отправителя SMS или звонящего.
+ *
+ * Когда настройка включена, записи с номерами, которые не приводятся к E.164
+ * (буквенные имена отправителей, служебные номера), не попадают в отчёт.
+ * Курсоры обмена при этом всё равно сдвигаются: иначе такие строки читались бы
+ * в каждом цикле. Счётчики и примеры нужны для понятного сообщения в журнале.
+ */
+private class PeerFilter(private val enabled: Boolean) {
+
+    var sms: Int = 0
+        private set
+
+    var calls: Int = 0
+        private set
+
+    private val examples = linkedSetOf<String>()
+
+    val total: Int get() = sms + calls
+
+    fun accept(raw: String, isSms: Boolean): Boolean {
+        if (!enabled) return true
+        if (PhoneNumbers.e164OrNull(raw) != null) return true
+
+        if (isSms) sms++ else calls++
+        if (examples.size < MAX_EXAMPLES && raw.isNotBlank()) {
+            examples += raw.trim()
+        }
+        return false
+    }
+
+    fun details(): String = buildString {
+        appendLine("SMS: $sms, звонков: $calls")
+        appendLine("Отправка таких записей отключена в настройках (номер не в формате E.164).")
+        if (examples.isNotEmpty()) {
+            append("Примеры: " + examples.joinToString(", ") { "«$it»" })
+        }
+    }
+
+    private companion object {
+        const val MAX_EXAMPLES = 5
+    }
+}
+
+/**
  * Один цикл обмена с сервером.
  *
  * Порядок: собираем данные окна → отправляем отчёт на URL обмена → при успехе двигаем курсоры
@@ -84,10 +128,11 @@ class SyncEngine(
         if (simPhones.isEmpty()) {
             log.warn(
                 LogCategory.HTTP,
-                "Обмен отменён: в настройках не заданы номера SIM",
-                "Номер SIM — ключ отчёта, без него отчёт собрать нельзя",
+                "Обмен отменён: в настройках не заданы корректные номера SIM",
+                "Номер SIM — ключ отчёта, без него отчёт собрать нельзя. " +
+                    "При включённом фильтре номер должен быть в формате E.164",
             )
-            return SyncOutcome(error = "не заданы номера SIM")
+            return SyncOutcome(error = "не заданы корректные номера SIM")
         }
 
         val exchange = sendExchange(settings, state, simPhones, startedAtMs)
@@ -140,8 +185,10 @@ class SyncEngine(
             unattributed++
             return fallbackPhone
         }
+        val peerFilter = PeerFilter(settings.skipInvalidNumbers)
 
         newSms.forEach { row ->
+            if (!peerFilter.accept(row.address, isSms = true)) return@forEach
             smsByPhone.getValue(phoneFor(row.simSlot)).add(
                 SmsReportDto(
                     time = Time.formatIso(row.dateMs),
@@ -151,6 +198,7 @@ class SyncEngine(
             )
         }
         newCalls.forEach { row ->
+            if (!peerFilter.accept(row.number, isSms = false)) return@forEach
             callsByPhone.getValue(phoneFor(row.simSlot)).add(
                 CallReportDto(
                     time = Time.formatIso(row.dateMs),
@@ -161,6 +209,13 @@ class SyncEngine(
                 ),
             )
         }
+        if (peerFilter.total > 0) {
+            log.warn(
+                LogCategory.HTTP,
+                "Пропущено записей с номером не в формате E.164: ${peerFilter.total}",
+                peerFilter.details(),
+            )
+        }
 
         if (unattributed > 0) {
             log.warn(
@@ -169,6 +224,9 @@ class SyncEngine(
                 "Проверьте, что номера SIM в настройках заполнены верно",
             )
         }
+
+        val sentSms = smsByPhone.values.sumOf { it.size }
+        val sentCalls = callsByPhone.values.sumOf { it.size }
 
         val payload = ReportPayload(
             syncId = stateStore.exchangeSyncId(),
@@ -182,7 +240,7 @@ class SyncEngine(
 
         log.info(
             LogCategory.HTTP,
-            "Обмен: собрано SMS ${newSms.size}, звонков ${newCalls.size}",
+            "Обмен: к отправке SMS $sentSms, звонков $sentCalls",
             buildString {
                 appendLine("окно с ${Time.formatLocal(windowStartMs)}")
                 appendLine(
@@ -191,6 +249,12 @@ class SyncEngine(
                         "(не входящие или уже отправленные), " +
                         "звонков ${callRows.size - newCalls.size} (уже отправленные)",
                 )
+                if (peerFilter.total > 0) {
+                    appendLine(
+                        "отфильтровано по E.164: ${peerFilter.total} " +
+                            "(SMS ${peerFilter.sms}, звонков ${peerFilter.calls})",
+                    )
+                }
                 appendLine(
                     "курсоры до: SMS #${state.lastSmsId}, звонки #${state.lastCallId}; " +
                         "после успеха станут: SMS #$maxSmsId, звонки #$maxCallId",
@@ -240,8 +304,8 @@ class SyncEngine(
                 SyncOutcome(
                     exchangeAttempted = true,
                     exchangeOk = true,
-                    smsCount = newSms.size,
-                    callCount = newCalls.size,
+                    smsCount = sentSms,
+                    callCount = sentCalls,
                     commands = commands,
                 )
             }
@@ -335,27 +399,41 @@ class SyncEngine(
         }
 
         val fallbackPhone = simPhones.values.first()
+        val peerFilter = PeerFilter(settings.skipInvalidNumbers)
         fresh.filter { it.success }.forEach { record ->
             val phone = simPhones[record.simSlot] ?: fallbackPhone
             when (record.kind) {
-                TaskKind.SEND_SMS -> smsByPhone.getValue(phone).add(
-                    SmsReportDto(
-                        time = Time.formatIso(record.atMs),
-                        text = record.text,
-                        phone = record.phone,
-                    ),
-                )
+                TaskKind.SEND_SMS -> {
+                    if (!peerFilter.accept(record.phone, isSms = true)) return@forEach
+                    smsByPhone.getValue(phone).add(
+                        SmsReportDto(
+                            time = Time.formatIso(record.atMs),
+                            text = record.text,
+                            phone = record.phone,
+                        ),
+                    )
+                }
 
-                TaskKind.MAKE_CALL -> callsByPhone.getValue(phone).add(
-                    CallReportDto(
-                        time = Time.formatIso(record.atMs),
-                        text = "",
-                        phone = record.phone,
-                        duration = record.durationSeconds,
-                        direction = CallDirection.OUT,
-                    ),
-                )
+                TaskKind.MAKE_CALL -> {
+                    if (!peerFilter.accept(record.phone, isSms = false)) return@forEach
+                    callsByPhone.getValue(phone).add(
+                        CallReportDto(
+                            time = Time.formatIso(record.atMs),
+                            text = "",
+                            phone = record.phone,
+                            duration = record.durationSeconds,
+                            direction = CallDirection.OUT,
+                        ),
+                    )
+                }
             }
+        }
+        if (peerFilter.total > 0) {
+            log.warn(
+                LogCategory.HTTP,
+                "Отчёт об исходящих: пропущено записей с номером не в формате E.164: ${peerFilter.total}",
+                peerFilter.details(),
+            )
         }
 
         val payload = ReportPayload(
@@ -404,8 +482,21 @@ class SyncEngine(
 
     private fun configuredSimPhones(settings: Settings): Map<Int, String> {
         val phones = linkedMapOf<Int, String>()
-        if (settings.sim1Phone.isNotBlank()) phones[0] = settings.sim1Phone.trim()
-        if (settings.sim2Phone.isNotBlank()) phones[1] = settings.sim2Phone.trim()
+        fun add(slot: Int, raw: String) {
+            val phone = raw.trim()
+            if (phone.isEmpty()) return
+            if (settings.skipInvalidNumbers && PhoneNumbers.e164OrNull(phone) == null) {
+                log.warn(
+                    LogCategory.HTTP,
+                    "Номер SIM${slot + 1} не в формате E.164 — SIM пропущена",
+                    "«$phone»; исправьте номер в настройках",
+                )
+                return
+            }
+            phones[slot] = phone
+        }
+        add(0, settings.sim1Phone)
+        add(1, settings.sim2Phone)
         return phones
     }
 
