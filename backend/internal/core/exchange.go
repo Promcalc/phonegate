@@ -25,10 +25,9 @@ func (s *Service) HandleExchange(ctx context.Context, gateway *model.Gateway, re
 	if req == nil || strings.TrimSpace(req.SyncID) == "" {
 		return errBad("invalid_request", "Требуется sync_id")
 	}
-	now := s.now().UTC()
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now().UTC()
 
 	if err := s.store.TouchGateway(ctx, gateway.ID, now); err != nil {
 		return errInternal("Ошибка хранилища")
@@ -164,13 +163,22 @@ func (s *Service) handleSMS(ctx context.Context, gateway *model.Gateway, number 
 	if !ok {
 		return
 	}
-	pending, _ := s.store.PendingSessionsByGateway(ctx, number.E164)
-	if len(pending) == 0 {
-		return
-	}
 	candidates := smsCandidates(item.Text)
 	if len(candidates) == 0 {
 		s.log.Debug("event.unmatched", "gateway", gateway.ID, "kind", "sms", "reason", "no_code")
+		return
+	}
+	allowed, err := s.incomingCodes.Check(ctx, peer, now)
+	if err != nil {
+		s.log.Error("event.rate_limit_failed", "gateway", gateway.ID, "kind", "sms", "error", err)
+		return
+	}
+	if !allowed {
+		s.log.Info("event.rate_limited", "gateway", gateway.ID, "kind", "sms", "peer", phone.Mask(peer))
+		return
+	}
+	pending, _ := s.store.PendingSessionsByGateway(ctx, number.E164)
+	if len(pending) == 0 {
 		return
 	}
 	matches := make(map[string]*model.Verification)

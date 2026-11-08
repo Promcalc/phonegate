@@ -19,6 +19,7 @@ import (
 	"phonegate/backend/internal/httpapi"
 	"phonegate/backend/internal/links"
 	"phonegate/backend/internal/model"
+	"phonegate/backend/internal/ratelimit"
 	"phonegate/backend/internal/store"
 )
 
@@ -63,7 +64,8 @@ func main() {
 	}
 
 	lm := links.NewManager(cfg.Server.PublicURL, cfg.Verification.Links.PagePath, cfg.Verification.Links.Secret)
-	svc := core.NewService(cfg, st, logger, lm)
+	incomingCodes := ratelimit.New(cfg.Verification.IncomingCodesPerPhonePerMinute, time.Minute, ratelimit.NewMemory())
+	svc := core.NewService(cfg, st, logger, lm, incomingCodes)
 	go janitor(ctx, svc, logger)
 
 	api := httpapi.New(cfg, svc, logger)

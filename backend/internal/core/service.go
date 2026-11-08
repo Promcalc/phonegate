@@ -20,6 +20,7 @@ import (
 	"phonegate/backend/internal/links"
 	"phonegate/backend/internal/model"
 	"phonegate/backend/internal/phone"
+	"phonegate/backend/internal/ratelimit"
 	"phonegate/backend/internal/store"
 )
 
@@ -68,20 +69,23 @@ type Service struct {
 	mu   sync.Mutex
 	idem map[string]idemEntry
 	rr   map[string]int
+
+	incomingCodes *ratelimit.Limiter
 }
 
-func NewService(cfg *config.Config, st store.Store, log *slog.Logger, lm *links.Manager) *Service {
+func NewService(cfg *config.Config, st store.Store, log *slog.Logger, lm *links.Manager, incomingCodes *ratelimit.Limiter) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Service{
-		cfg:   cfg,
-		store: st,
-		log:   log,
-		links: lm,
-		now:   func() time.Time { return time.Now().UTC() },
-		idem:  make(map[string]idemEntry),
-		rr:    make(map[string]int),
+		cfg:           cfg,
+		store:         st,
+		log:           log,
+		links:         lm,
+		now:           func() time.Time { return time.Now().UTC() },
+		idem:          make(map[string]idemEntry),
+		rr:            make(map[string]int),
+		incomingCodes: incomingCodes,
 	}
 }
 

@@ -57,6 +57,9 @@ verification:
   max_ttl: 15m
   code_length: 6
   max_attempts: 3
+  # SMS с кодами от одного отправителя за любые последние 60 секунд по времени сервера.
+  # Превышение игнорируется, пока в скользящем окне не освободится место.
+  incoming_codes_per_phone_per_minute: 10
   retry_interval: 10s
   max_active_sms_per_phone: 10
   one_active_call_per_gateway: true

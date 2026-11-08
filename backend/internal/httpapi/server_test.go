@@ -15,6 +15,7 @@ import (
 	"phonegate/backend/internal/core"
 	"phonegate/backend/internal/links"
 	"phonegate/backend/internal/model"
+	"phonegate/backend/internal/ratelimit"
 	"phonegate/backend/internal/store"
 )
 
@@ -71,7 +72,8 @@ func newTestServer(t *testing.T) (*httptest.Server, *core.Service, *store.Memory
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lm := links.NewManager(cfg.Server.PublicURL, "/v", cfg.Verification.Links.Secret)
-	svc := core.NewService(&cfg, st, logger, lm)
+	incomingCodes := ratelimit.New(cfg.Verification.IncomingCodesPerPhonePerMinute, time.Minute, ratelimit.NewMemory())
+	svc := core.NewService(&cfg, st, logger, lm, incomingCodes)
 	api := New(&cfg, svc, logger)
 	ts.Config.Handler = api.Handler()
 	ts.Start()

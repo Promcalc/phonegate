@@ -122,22 +122,23 @@ type MaxBodyEvents struct {
 }
 
 type VerificationConfig struct {
-	DefaultTTL              Duration        `yaml:"default_ttl"`
-	MaxTTL                  Duration        `yaml:"max_ttl"`
-	CodeLength              int             `yaml:"code_length"`
-	MaxAttempts             int             `yaml:"max_attempts"`
-	RetryInterval           Duration        `yaml:"retry_interval"`
-	MaxActiveSMSPerPhone    int             `yaml:"max_active_sms_per_phone"`
-	OneActiveCallPerGateway bool            `yaml:"one_active_call_per_gateway"`
-	Sticky                  bool            `yaml:"sticky"`
-	ClockSkew               Duration        `yaml:"clock_skew"`
-	Selection               string          `yaml:"selection"`
-	MaxPendingPerNumber     int             `yaml:"max_pending_per_number"`
-	MaxAssignmentsPerHour   int             `yaml:"max_assignments_per_hour"`
-	CodeFirst               CodeFirstConfig `yaml:"code_first"`
-	SMS                     SMSConfig       `yaml:"sms"`
-	Call                    CallConfig      `yaml:"call"`
-	Links                   LinksConfig     `yaml:"links"`
+	DefaultTTL                     Duration        `yaml:"default_ttl"`
+	MaxTTL                         Duration        `yaml:"max_ttl"`
+	CodeLength                     int             `yaml:"code_length"`
+	MaxAttempts                    int             `yaml:"max_attempts"`
+	IncomingCodesPerPhonePerMinute int             `yaml:"incoming_codes_per_phone_per_minute"`
+	RetryInterval                  Duration        `yaml:"retry_interval"`
+	MaxActiveSMSPerPhone           int             `yaml:"max_active_sms_per_phone"`
+	OneActiveCallPerGateway        bool            `yaml:"one_active_call_per_gateway"`
+	Sticky                         bool            `yaml:"sticky"`
+	ClockSkew                      Duration        `yaml:"clock_skew"`
+	Selection                      string          `yaml:"selection"`
+	MaxPendingPerNumber            int             `yaml:"max_pending_per_number"`
+	MaxAssignmentsPerHour          int             `yaml:"max_assignments_per_hour"`
+	CodeFirst                      CodeFirstConfig `yaml:"code_first"`
+	SMS                            SMSConfig       `yaml:"sms"`
+	Call                           CallConfig      `yaml:"call"`
+	Links                          LinksConfig     `yaml:"links"`
 }
 
 type CodeFirstConfig struct {
@@ -293,18 +294,19 @@ func Defaults() Config {
 			ValidatePeerNumbers:  true,
 		},
 		Verification: VerificationConfig{
-			DefaultTTL:              Duration(5 * time.Minute),
-			MaxTTL:                  Duration(15 * time.Minute),
-			CodeLength:              6,
-			MaxAttempts:             3,
-			RetryInterval:           Duration(30 * time.Second),
-			MaxActiveSMSPerPhone:    10,
-			OneActiveCallPerGateway: true,
-			Sticky:                  true,
-			ClockSkew:               Duration(120 * time.Second),
-			Selection:               "least_loaded",
-			MaxPendingPerNumber:     50,
-			MaxAssignmentsPerHour:   120,
+			DefaultTTL:                     Duration(5 * time.Minute),
+			MaxTTL:                         Duration(15 * time.Minute),
+			CodeLength:                     6,
+			MaxAttempts:                    3,
+			IncomingCodesPerPhonePerMinute: 10,
+			RetryInterval:                  Duration(30 * time.Second),
+			MaxActiveSMSPerPhone:           10,
+			OneActiveCallPerGateway:        true,
+			Sticky:                         true,
+			ClockSkew:                      Duration(120 * time.Second),
+			Selection:                      "least_loaded",
+			MaxPendingPerNumber:            50,
+			MaxAssignmentsPerHour:          120,
 			CodeFirst: CodeFirstConfig{
 				Enabled:               true,
 				TTL:                   Duration(10 * time.Minute),
@@ -451,6 +453,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Verification.MaxAttempts < 1 {
 		return fmt.Errorf("verification.max_attempts must be positive")
+	}
+	if c.Verification.IncomingCodesPerPhonePerMinute < 1 {
+		return fmt.Errorf("verification.incoming_codes_per_phone_per_minute must be positive")
 	}
 	if c.Verification.MaxActiveSMSPerPhone < 1 {
 		return fmt.Errorf("verification.max_active_sms_per_phone must be positive")

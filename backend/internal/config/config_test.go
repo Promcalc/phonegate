@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,31 @@ func TestLoadDevelopmentExample(t *testing.T) {
 	}
 	if len(cfg.Pools["demo"].Numbers) != 1 || cfg.Pools["demo"].Numbers[0] != "+79005550001" {
 		t.Fatalf("pool: %#v", cfg.Pools["demo"])
+	}
+}
+
+func TestIncomingCodeRateLimitConfig(t *testing.T) {
+	if got := Defaults().Verification.IncomingCodesPerPhonePerMinute; got != 10 {
+		t.Fatalf("default incoming code limit = %d", got)
+	}
+	example, err := os.ReadFile("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"0", "-1", "2"} {
+		t.Run(value, func(t *testing.T) {
+			cfg, err := Parse([]byte(strings.Replace(string(example), "incoming_codes_per_phone_per_minute: 10", "incoming_codes_per_phone_per_minute: "+value, 1)))
+			if value == "2" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.Verification.IncomingCodesPerPhonePerMinute != 2 {
+					t.Fatal("configured limit was not loaded")
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "incoming_codes_per_phone_per_minute must be positive") {
+				t.Fatalf("expected invalid incoming code limit, got %v", err)
+			}
+		})
 	}
 }
 

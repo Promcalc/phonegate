@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"phonegate/backend/internal/config"
 	"phonegate/backend/internal/links"
 	"phonegate/backend/internal/model"
+	"phonegate/backend/internal/ratelimit"
 	"phonegate/backend/internal/store"
 )
 
@@ -75,7 +77,8 @@ func testService(t *testing.T) (*Service, *store.Memory, *time.Time, *model.Gate
 	logger := slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelError}))
 	lm := links.NewManager(cfg.Server.PublicURL, "/v", cfg.Verification.Links.Secret)
 	lm.SetClock(func() time.Time { return now })
-	svc := NewService(cfg, st, logger, lm)
+	incomingCodes := ratelimit.New(cfg.Verification.IncomingCodesPerPhonePerMinute, time.Minute, ratelimit.NewMemory())
+	svc := NewService(cfg, st, logger, lm, incomingCodes)
 	svc.SetClock(func() time.Time { return now })
 	gateway, err := st.GatewayByID(context.Background(), testGatewayID)
 	if err != nil {
@@ -148,6 +151,135 @@ func TestSMSVerification(t *testing.T) {
 	}
 	if v.Phone == nil || *v.Phone != testPhone {
 		t.Fatalf("phone = %#v", v.Phone)
+	}
+}
+
+func TestIncomingCodeRateLimit(t *testing.T) {
+	for _, limit := range []int{1, 10} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			svc, _, now, gateway := testService(t)
+			*now = now.Add(59 * time.Second)
+			svc.incomingCodes = ratelimit.New(limit, time.Minute, ratelimit.NewMemory())
+			ctx := context.Background()
+			create := func(peer string) *Created {
+				t.Helper()
+				created, err := svc.Create(ctx, testTenant, CreateRequest{Phone: peer, Method: "sms"}, "127.0.0.1", NewID("req_"), "", false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return created
+			}
+			assertStatus := func(created *Created, status string) {
+				t.Helper()
+				v, err := svc.Get(ctx, testTenant, created.Verification.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v.Status != status || v.Attempts != 0 {
+					t.Fatalf("status = %s, attempts = %d; want %s, 0", v.Status, v.Attempts, status)
+				}
+			}
+			first := create(testPhone)
+			blocked := create(testPhone)
+			other := create("+79007654321")
+
+			// One batch can exhaust the quota. Wrong codes count too, but
+			// gateway redelivery of the same event does not consume a slot.
+			var items []SMSItem
+			for i := 0; i < limit-1; i++ {
+				item := SMSItem{Time: now.Format(time.RFC3339), Phone: testPhone, Text: fmt.Sprintf("WRONG%04d", i)}
+				items = append(items, item, item)
+			}
+			items = append(items,
+				SMSItem{Time: now.Format(time.RFC3339), Phone: "8 (900) 123-45-67", Text: first.Code},
+				SMSItem{Time: now.Format(time.RFC3339), Phone: testPhone, Text: blocked.Code},
+				SMSItem{Time: now.Format(time.RFC3339), Phone: "+79007654321", Text: other.Code},
+			)
+			if err := svc.HandleExchange(ctx, gateway, &ExchangeRequest{
+				SyncID: "rate-limit", Sims: []SimReport{{Phone: testGatewayNumber, SMS: items}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			assertStatus(first, model.StatusVerified)
+			assertStatus(blocked, model.StatusPending)
+			assertStatus(other, model.StatusVerified)
+
+			// Crossing a calendar-minute boundary does not refill the quota.
+			windowStart := *now
+			*now = now.Add(time.Second)
+			exchangeSMS(t, svc, gateway, *now, testPhone, blocked.Code)
+			assertStatus(blocked, model.StatusPending)
+			*now = windowStart.Add(time.Minute - time.Second)
+			exchangeSMS(t, svc, gateway, *now, testPhone, blocked.Code)
+			assertStatus(blocked, model.StatusPending)
+
+			// An event timestamp in the next minute cannot bypass the quota.
+			nextMinute := windowStart.Add(time.Minute)
+			exchangeSMS(t, svc, gateway, nextMinute, testPhone, blocked.Code)
+			assertStatus(blocked, model.StatusPending)
+			*now = nextMinute
+			// Dropped events stay dropped, even if the gateway resends them.
+			exchangeSMS(t, svc, gateway, *now, testPhone, blocked.Code)
+			assertStatus(blocked, model.StatusPending)
+			*now = now.Add(time.Second)
+			exchangeSMS(t, svc, gateway, *now, testPhone, blocked.Code)
+			assertStatus(blocked, model.StatusVerified)
+		})
+	}
+}
+
+type testRateLimitStorageFunc func(context.Context, string, func([]time.Time) []time.Time) error
+
+func (f testRateLimitStorageFunc) Update(ctx context.Context, key string, update func([]time.Time) []time.Time) error {
+	return f(ctx, key, update)
+}
+
+func TestIncomingCodeStorageDependency(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		allowed bool
+		err     error
+		status  string
+	}{
+		{"allowed", true, nil, model.StatusVerified},
+		{"denied", false, nil, model.StatusPending},
+		{"unavailable", false, errors.New("limiter unavailable"), model.StatusPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, now, gateway := testService(t)
+			calls := 0
+			storage := testRateLimitStorageFunc(func(ctx context.Context, key string, update func([]time.Time) []time.Time) error {
+				calls++
+				if ctx.Err() != nil || key != testPhone {
+					t.Fatalf("unexpected storage arguments: key=%s", key)
+				}
+				if tc.err != nil {
+					return tc.err
+				}
+				var history []time.Time
+				if !tc.allowed {
+					history = []time.Time{*now}
+				}
+				updated := update(history)
+				if len(updated) != 1 || !updated[0].Equal(*now) {
+					t.Fatalf("unexpected history: %v", updated)
+				}
+				return nil
+			})
+			svc.incomingCodes = ratelimit.New(1, time.Minute, storage)
+			created, err := svc.Create(context.Background(), testTenant, CreateRequest{Phone: testPhone, Method: "sms"}, "127.0.0.1", "req", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exchangeSMS(t, svc, gateway, *now, "8 (900) 123-45-67", created.Code)
+			v, err := svc.Get(context.Background(), testTenant, created.Verification.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 || v.Status != tc.status {
+				t.Fatalf("calls=%d status=%s; want 1, %s", calls, v.Status, tc.status)
+			}
+		})
 	}
 }
 
