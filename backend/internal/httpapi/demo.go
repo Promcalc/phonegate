@@ -62,6 +62,8 @@ body{background:#f6f7f9}
 <button class="btn btn-outline-secondary btn-sm" id="btnBack">Назад</button>
 </div>
 
+<div class="alert alert-success" id="verificationSuccess" role="status" style="display:none">Получен верный код. Номер телефона подтверждён.</div>
+
 <div class="row g-3" id="actions">
 <div class="col-12 col-md-6" id="action-sms">
 <div class="card action-card h-100 p-3">
@@ -160,6 +162,7 @@ function resetToPhone() {
 	verificationId = null; gatewayNumber = null; smsCode = null; callCode = null;
 	show(qs('#step-phone'), true);
 	show(qs('#step-verify'), false);
+	show(qs('#verificationSuccess'), false);
 	qs('#phoneInput').value = '';
 	qs('#phoneError').style.display = 'none';
 }
@@ -185,6 +188,7 @@ function showStepVerify(data) {
 	}
 
 	['errSms','okSms','errCall','okCall'].forEach(function(id) { show(qs('#' + id), false); });
+	show(qs('#verificationSuccess'), false);
 	removeClass(qs('#action-sms'), 'verified'); removeClass(qs('#action-sms'), 'error');
 	removeClass(qs('#action-call'), 'verified'); removeClass(qs('#action-call'), 'error');
 
@@ -245,11 +249,11 @@ function handleStatus(data) {
 	var status = data.status;
 	if (status === 'verified') {
 		stopTimer(); stopPoll();
+		show(qs('#verificationSuccess'), true);
 		var isSms = data.method === 'sms' || data.method === 'any';
 		var isCall = data.method === 'call' || data.method === 'any';
 		if (isSms) { show(qs('#okSms'), true); setText(qs('#okSms'), '\u2713 Номер подтверждён по SMS'); addClass(qs('#action-sms'), 'verified'); }
 		if (isCall) { show(qs('#okCall'), true); setText(qs('#okCall'), '\u2713 Номер подтверждён звонком'); addClass(qs('#action-call'), 'verified'); }
-		setTimeout(resetToPhone, 3000);
 	} else if (status === 'failed' || status === 'expired' || status === 'cancelled') {
 		stopTimer(); stopPoll();
 		var msg = status === 'failed' ? 'Ошибка: слишком много неверных попыток' :
